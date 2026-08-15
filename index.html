@@ -7,8 +7,12 @@
 <meta name="description" content="음원 파일 없이 Web Audio API로 소리를 합성하는 비트박스 사운드보드">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="비트박스">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>비트박스 올인원 v0.1</title>
+<link rel="manifest" href="">
+<link rel="apple-touch-icon" href="">
+<link rel="icon" href="">
+<title>비트박스 올인원 v0.1.5</title>
 <style>
   :root{
     --bg:#0b0c10;
@@ -16,10 +20,16 @@
     --line:#252936;
     --txt:#e8eaf2;
     --dim:#767d93;
+    /* 왼쪽 열 = 드럼 몸통 (따뜻한 색) */
     --kick:#ff5f52;
     --snare:#ffb03a;
+    --tom:#c77dff;
+    --rim:#ff7eb6;
+    /* 오른쪽 열 = 심벌·박수 (차가운 색) */
     --hat:#2fd0bb;
     --open:#7b9bff;
+    --clap:#8fe388;
+    --crash:#ffd166;
     --safe-b:env(safe-area-inset-bottom,0px);
     --safe-t:env(safe-area-inset-top,0px);
   }
@@ -31,18 +41,25 @@
     color:var(--txt);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
     display:flex;flex-direction:column;
-    gap:10px;
-    padding:calc(12px + var(--safe-t)) 12px calc(10px + var(--safe-b));
+    gap:8px;
+    padding:calc(10px + var(--safe-t)) 10px calc(8px + var(--safe-b));
     overscroll-behavior:none;
     touch-action:manipulation;
     -webkit-user-select:none;user-select:none;
   }
 
   /* ── 헤더 ─────────────────────────────── */
-  header{flex:0 0 auto;display:flex;align-items:baseline;gap:7px;}
-  h1{font-size:15px;margin:0;letter-spacing:-.3px;font-weight:700;}
+  header{flex:0 0 auto;display:flex;align-items:center;gap:7px;}
+  h1{font-size:14px;margin:0;letter-spacing:-.3px;font-weight:700;}
   .ver{font-size:11px;color:var(--dim);font-weight:500;}
-  .hint{margin-left:auto;font-size:11px;color:var(--dim);}
+  .btn{
+    font:inherit;font-size:11px;font-weight:600;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:5px 10px;cursor:pointer;
+  }
+  .btn:active{transform:scale(.95);}
+  header .btn{margin-left:auto;}
+  header .btn.on{color:var(--txt);border-color:var(--txt);}
 
   /* ── 시작 게이트 ───────────────────────
      브라우저는 사용자 제스처 전에 오디오를 막는다.
@@ -51,14 +68,15 @@
     position:fixed;inset:0;z-index:50;
     background:radial-gradient(120% 90% at 50% 0%,#171a24 0%,var(--bg) 60%);
     display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:15px;padding:28px;text-align:center;
+    gap:14px;padding:26px;text-align:center;
     transition:opacity .28s ease;
   }
   #gate.off{opacity:0;pointer-events:none;}
   #gate[hidden]{display:none;}   /* id 선택자가 세서 [hidden] 기본 규칙을 덮어쓴다 */
-  #gate .logo{font-size:42px;line-height:1;}
+  #gate .logo{display:grid;grid-template-columns:1fr 1fr;gap:5px;width:64px;height:64px;}
+  #gate .logo i{border-radius:11px;}
   #gate h2{margin:0;font-size:21px;letter-spacing:-.4px;}
-  #gate p{margin:0;color:var(--dim);font-size:13px;line-height:1.65;max-width:305px;}
+  #gate p{margin:0;color:var(--dim);font-size:13px;line-height:1.65;max-width:310px;}
   #gate .two{color:var(--txt);font-weight:600;}
   #start{
     margin-top:4px;padding:17px 46px;font:inherit;font-size:16px;font-weight:700;
@@ -71,33 +89,40 @@
   #gate .err{color:var(--kick);font-size:12px;min-height:1em;}
 
   /* ── 패드 그리드 ───────────────────────
-     세로: 왼쪽 열=킥·스네어(저음), 오른쪽 열=하이햇·오픈햇.
-       · 자주 겹치는 조합(킥+햇, 스네어+햇)이 항상 좌우 다른 엄지에 걸린다
+     세로: 왼쪽 열 = 드럼 몸통(킥·스네어·톰·림샷), 오른쪽 열 = 심벌·박수.
+       · 자주 겹치는 조합(킥+햇, 스네어+햇, 킥+크래시, 스네어+클랩)이
+         항상 좌우 다른 엄지에 걸린다
        · 서로 choke 관계라 동시에 울릴 수 없는 햇/오픈햇은 같은 엄지에 묶는다
-     가로: 한 줄 4칸 드럼랙. */
+     가로: 왼쪽 절반 = 드럼, 오른쪽 절반 = 심벌. 손 나누기는 그대로. */
   .pads{
     position:relative;
     flex:1 1 auto;min-height:0;
     display:grid;
     grid-template-columns:1fr 1fr;
-    grid-template-rows:1fr 1fr;
+    grid-template-rows:repeat(4,1fr);
     grid-template-areas:
       "kick  hat"
-      "snare open";
-    gap:10px;
+      "snare open"
+      "tom   clap"
+      "rim   crash";
+    gap:8px;
   }
-  .pad[data-k="kick"] {grid-area:kick;  --c:var(--kick); --tint:#2c1614;}
-  .pad[data-k="snare"]{grid-area:snare; --c:var(--snare);--tint:#2b2011;}
-  .pad[data-k="hat"]  {grid-area:hat;   --c:var(--hat);  --tint:#10241f;}
-  .pad[data-k="open"] {grid-area:open;  --c:var(--open); --tint:#171c2e;}
+  .pad[data-k="kick"] {grid-area:kick;  --c:var(--kick);}
+  .pad[data-k="snare"]{grid-area:snare; --c:var(--snare);}
+  .pad[data-k="tom"]  {grid-area:tom;   --c:var(--tom);}
+  .pad[data-k="rim"]  {grid-area:rim;   --c:var(--rim);}
+  .pad[data-k="hat"]  {grid-area:hat;   --c:var(--hat);}
+  .pad[data-k="open"] {grid-area:open;  --c:var(--open);}
+  .pad[data-k="clap"] {grid-area:clap;  --c:var(--clap);}
+  .pad[data-k="crash"]{grid-area:crash; --c:var(--crash);}
 
   .pad{
     position:relative;overflow:hidden;
     font:inherit;color:inherit;
     background:var(--panel);
     border:1px solid var(--line);
-    border-radius:20px;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+    border-radius:16px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
     cursor:pointer;
     touch-action:none;           /* 스크롤/줌에 터치를 뺏기지 않게 */
     transition:transform .05s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease;
@@ -109,34 +134,35 @@
     opacity:.07;transition:opacity .16s ease;
   }
   .pad > *{position:relative;}
-  .pad .name{font-size:17px;font-weight:700;letter-spacing:-.3px;}
+  .pad .name{font-size:15px;font-weight:700;letter-spacing:-.3px;}
   .pad .key{
-    font-size:10.5px;color:var(--dim);
-    border:1px solid var(--line);border-radius:7px;
-    padding:3px 9px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10px;color:var(--dim);
+    border:1px solid var(--line);border-radius:6px;
+    padding:2px 7px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     transition:color .16s ease,border-color .16s ease;
   }
   .pad .dot{
-    position:absolute;top:12px;right:12px;
-    width:8px;height:8px;border-radius:50%;
+    position:absolute;top:10px;right:10px;
+    width:7px;height:7px;border-radius:50%;
     background:var(--c);opacity:.45;
     transition:opacity .16s ease,box-shadow .16s ease;
   }
   .pad .n{
-    position:absolute;bottom:10px;left:13px;
-    font-size:10px;color:var(--dim);
+    position:absolute;bottom:8px;left:11px;
+    font-size:9.5px;color:var(--dim);
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     opacity:0;transition:opacity .2s ease;
   }
-  .pad.used .n{opacity:.75;}
+  .pad.used .n{opacity:.7;}
 
+  /* --v = 이번 타격 세기(0~1). 세게 칠수록 밝고 크게 번진다 */
   .pad.hit{
-    transform:scale(.962);
-    background:var(--tint);
+    transform:scale(calc(1 - .05 * var(--v,1)));
+    background:color-mix(in srgb, var(--c) calc(14% * var(--v,1)), var(--panel));
     border-color:var(--c);
-    box-shadow:0 0 0 1px var(--c) inset,0 0 30px -6px var(--c);
+    box-shadow:0 0 0 1px var(--c) inset, 0 0 calc(34px * var(--v,1)) -6px var(--c);
   }
-  .pad.hit::before{opacity:.24;}
+  .pad.hit::before{opacity:calc(.08 + .22 * var(--v,1));}
   .pad.hit .dot{opacity:1;box-shadow:0 0 10px 1px var(--c);}
   .pad.hit .key{color:var(--c);border-color:var(--c);}
 
@@ -148,25 +174,24 @@
   .pad[data-k="open"].ringing .dot{opacity:1;animation:pulse 1.2s ease-in-out infinite;}
   @keyframes pulse{50%{opacity:.35;}}
 
-  /* 터치 지점에서 퍼지는 링 — 손가락마다 따로 생긴다 */
+  /* 터치 지점에서 퍼지는 링 — 손가락마다 따로, 세기만큼 크게 */
   .ripple{
     position:absolute;border-radius:50%;pointer-events:none;
     width:12px;height:12px;margin:-6px 0 0 -6px;
-    background:var(--c);opacity:.32;
+    background:var(--c);
     animation:ripple .42s ease-out forwards;
   }
-  @keyframes ripple{to{transform:scale(26);opacity:0;}}
+  @keyframes ripple{to{transform:scale(var(--rs,20));opacity:0;}}
 
-  /* ── 동시 타격 배지 ───────────────────
-     패드 4개가 만나는 한가운데 = 조합이 성립하는 자리 */
+  /* ── 동시 타격 배지 ─────────────────── */
   #combo{
     position:absolute;left:50%;top:50%;
     transform:translate(-50%,-50%) scale(.9);
-    padding:9px 16px;border-radius:999px;
+    padding:8px 15px;border-radius:999px;
     background:rgba(11,12,16,.9);border:1px solid var(--line);
     backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-    font-size:13px;font-weight:700;white-space:nowrap;
-    display:flex;align-items:center;gap:7px;
+    font-size:12.5px;font-weight:700;white-space:nowrap;
+    display:flex;align-items:center;gap:6px;
     pointer-events:none;opacity:0;z-index:5;
   }
   #combo.show{animation:combo 1s ease-out forwards;}
@@ -178,33 +203,79 @@
     100%{opacity:0;transform:translate(-50%,-50%) scale(1);}
   }
   #combo i{width:7px;height:7px;border-radius:50%;flex:0 0 auto;}
-  #combo .plus{color:var(--dim);font-weight:400;margin:0 -2px;}
+  #combo .plus{color:var(--dim);font-weight:400;margin:0 -1px;}
 
   /* ── 푸터 ─────────────────────────────── */
   footer{
     flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:10px;
-    font-size:11px;color:var(--dim);
+    font-size:10.5px;color:var(--dim);
   }
-  .stats{display:flex;gap:10px;align-items:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .stats{display:flex;gap:9px;align-items:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
   #count{color:var(--txt);opacity:.85;}
   #chords{color:var(--hat);opacity:0;transition:opacity .3s ease;}
   #chords.on{opacity:.9;}
-  #status{
-    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    padding:3px 8px;border:1px solid var(--line);border-radius:999px;
-  }
+  #status{padding:3px 8px;border:1px solid var(--line);border-radius:999px;}
   #status.bad{color:var(--snare);border-color:var(--snare);}
 
-  /* 가로 모드 — 한 줄 드럼랙. 저음 왼쪽, 햇 오른쪽 순서는 유지 */
+  /* ── 사운드 튜닝 패널 ─────────────────
+     이 앱은 음원이 아니라 코드로 소리를 만든다.
+     그 파라미터를 그대로 열어주는 게 가장 자연스러운 확장이다. */
+  #tune{
+    position:fixed;inset:0;z-index:40;
+    background:var(--bg);
+    display:flex;flex-direction:column;gap:12px;
+    padding:calc(14px + var(--safe-t)) 14px calc(14px + var(--safe-b));
+    overflow-y:auto;overscroll-behavior:contain;
+  }
+  #tune[hidden]{display:none;}
+  .thead{display:flex;align-items:center;gap:8px;}
+  .thead b{font-size:15px;}
+  .thead .sub{font-size:11px;color:var(--dim);}
+  .thead .btn{margin-left:auto;}
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
+  .chip{
+    font:inherit;font-size:11.5px;font-weight:600;
+    padding:9px 4px;border-radius:10px;cursor:pointer;
+    background:var(--panel);color:var(--dim);
+    border:1px solid var(--line);
+  }
+  .chip.sel{color:var(--txt);border-color:var(--cc);background:color-mix(in srgb,var(--cc) 14%,var(--panel));}
+  .slider{display:flex;flex-direction:column;gap:5px;}
+  .slider .lab{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);}
+  .slider .lab b{color:var(--txt);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;margin:0;
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--line);}
+  input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--line);}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;width:22px;height:22px;border-radius:50%;
+    background:var(--cc,var(--txt));margin-top:-9px;border:0;cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:22px;height:22px;border-radius:50%;background:var(--cc,var(--txt));border:0;cursor:pointer;
+  }
+  .trow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .trow .sp{margin-left:auto;}
+  #tune-play{
+    font:inherit;font-size:15px;font-weight:700;padding:16px;border-radius:14px;
+    border:1px solid var(--cc);background:color-mix(in srgb,var(--cc) 16%,var(--panel));
+    color:var(--txt);cursor:pointer;
+  }
+  #tune-play:active{transform:scale(.98);}
+  .note{font-size:11px;color:var(--dim);line-height:1.6;}
+
+  /* 가로 모드 — 왼쪽 절반 드럼, 오른쪽 절반 심벌 */
   @media (orientation:landscape) and (max-height:560px){
-    body{gap:8px;padding-top:calc(8px + var(--safe-t));}
-    header .hint{display:none;}
+    body{gap:6px;padding-top:calc(6px + var(--safe-t));}
     .pads{
       grid-template-columns:repeat(4,1fr);
-      grid-template-rows:1fr;
-      grid-template-areas:"kick snare hat open";
+      grid-template-rows:1fr 1fr;
+      grid-template-areas:
+        "kick snare hat  open"
+        "tom  rim   clap crash";
     }
-    #combo{top:auto;bottom:10px;transform:translate(-50%,0) scale(1);}
+    #combo{top:auto;bottom:8px;transform:translate(-50%,0) scale(1);}
     #combo.show{animation:comboLand 1s ease-out forwards;}
     @keyframes comboLand{
       0%{opacity:0;transform:translate(-50%,0) scale(.82);}
@@ -213,12 +284,14 @@
       72%{opacity:1;}
       100%{opacity:0;transform:translate(-50%,0) scale(1);}
     }
+    .chips{grid-template-columns:repeat(8,1fr);}
   }
 
   @media (min-width:620px) and (orientation:portrait){
     body{max-width:660px;margin:0 auto;padding-top:22px;}
-    .pads{gap:14px;}
-    .pad .name{font-size:19px;}
+    .pads{gap:12px;}
+    .pad .name{font-size:18px;}
+    #tune{max-width:660px;margin:0 auto;}
   }
   @media (prefers-reduced-motion:reduce){
     *{animation-duration:.01ms !important;transition-duration:.01ms !important;}
@@ -230,9 +303,12 @@
 
 <!-- 오디오 게이트: 첫 사용자 제스처를 받아 AudioContext를 연다 -->
 <div id="gate">
-  <div class="logo">🥁</div>
+  <div class="logo">
+    <i style="background:var(--kick)"></i><i style="background:var(--hat)"></i>
+    <i style="background:var(--snare)"></i><i style="background:var(--open)"></i>
+  </div>
   <h2>비트박스 올인원</h2>
-  <p><b>v0.1 — 사운드보드</b><br><span class="two">두 손가락으로 동시에</span> 칠 수 있습니다.<br>음원 파일 없이 코드로 소리를 만듭니다.</p>
+  <p><b>v0.1.5 — 사운드보드</b><br><span class="two">패드 8개, 두 손가락 동시</span>, 세게/약하게.<br>음원 파일 없이 코드로 소리를 만듭니다.</p>
   <button id="start" type="button">시작하기</button>
   <p class="fineprint">브라우저는 한 번 눌러주기 전까지 소리를 막아둡니다.<br>그래서 이 버튼이 필요해요.</p>
   <p class="err" id="gate-err"></p>
@@ -240,28 +316,32 @@
 
 <header>
   <h1>비트박스 올인원</h1>
-  <span class="ver">v0.1</span>
-  <span class="hint">두 손가락 동시 · 쓸어서 굴리기</span>
+  <span class="ver">v0.1.5</span>
+  <button class="btn" id="tune-open" type="button">사운드 튜닝</button>
 </header>
 
 <main class="pads" id="pads">
   <button class="pad" type="button" data-k="kick"  tabindex="-1" aria-label="킥">
-    <span class="dot"></span><span class="name">킥</span><span class="key">A · SPACE</span><span class="n">0</span>
-  </button>
+    <span class="dot"></span><span class="name">킥</span><span class="key">A · SPACE</span><span class="n">0</span></button>
   <button class="pad" type="button" data-k="snare" tabindex="-1" aria-label="스네어">
-    <span class="dot"></span><span class="name">스네어</span><span class="key">S</span><span class="n">0</span>
-  </button>
+    <span class="dot"></span><span class="name">스네어</span><span class="key">S</span><span class="n">0</span></button>
   <button class="pad" type="button" data-k="hat"   tabindex="-1" aria-label="하이햇">
-    <span class="dot"></span><span class="name">하이햇</span><span class="key">D</span><span class="n">0</span>
-  </button>
+    <span class="dot"></span><span class="name">하이햇</span><span class="key">J</span><span class="n">0</span></button>
   <button class="pad" type="button" data-k="open"  tabindex="-1" aria-label="오픈 하이햇">
-    <span class="dot"></span><span class="name">오픈 하이햇</span><span class="key">F</span><span class="n">0</span>
-  </button>
+    <span class="dot"></span><span class="name">오픈 하이햇</span><span class="key">K</span><span class="n">0</span></button>
+  <button class="pad" type="button" data-k="tom"   tabindex="-1" aria-label="톰">
+    <span class="dot"></span><span class="name">톰</span><span class="key">D</span><span class="n">0</span></button>
+  <button class="pad" type="button" data-k="rim"   tabindex="-1" aria-label="림샷">
+    <span class="dot"></span><span class="name">림샷</span><span class="key">F</span><span class="n">0</span></button>
+  <button class="pad" type="button" data-k="clap"  tabindex="-1" aria-label="클랩">
+    <span class="dot"></span><span class="name">클랩</span><span class="key">L</span><span class="n">0</span></button>
+  <button class="pad" type="button" data-k="crash" tabindex="-1" aria-label="크래시">
+    <span class="dot"></span><span class="name">크래시</span><span class="key">;</span><span class="n">0</span></button>
   <div id="combo"></div>
 </main>
 
 <footer>
-  <span>다음 → v0.2 루프스테이션 (REC · 레이어)</span>
+  <span>가운데=세게 · 가장자리=약하게</span>
   <span class="stats">
     <span id="status" hidden></span>
     <span id="chords"></span>
@@ -269,27 +349,91 @@
   </span>
 </footer>
 
+<!-- 사운드 튜닝 -->
+<div id="tune" hidden>
+  <div class="thead">
+    <b>사운드 튜닝</b>
+    <span class="sub">코드로 만든 소리라 값을 직접 바꿀 수 있습니다</span>
+    <button class="btn" id="tune-close" type="button">닫기</button>
+  </div>
+  <div class="chips" id="tune-chips"></div>
+  <div id="tune-sliders"></div>
+  <div class="trow" id="tune-presets"></div>
+  <button id="tune-play" type="button">쳐보기</button>
+  <div class="trow">
+    <button class="btn" id="tune-reset" type="button">이 패드 초기화</button>
+    <button class="btn sp" id="tune-reset-all" type="button">전부 초기화</button>
+  </div>
+  <p class="note">바꾼 값은 이 브라우저에 저장됩니다. 프리셋은 8개 패드 전부를 한 번에 바꿉니다.</p>
+</div>
+
 <script>
 (() => {
 'use strict';
 
 /* ═══════════════════════════════════════════
+   소리 파라미터 — 튜닝 패널이 이 값을 직접 만진다
+   ═══════════════════════════════════════════ */
+const DEFAULTS = {
+  kick:  { pitch:150,  decay:0.42 },
+  snare: { pitch:180,  noise:0.75, decay:0.19 },
+  hat:   { cut:7000,   decay:0.06 },
+  open:  { cut:7000,   decay:0.45 },
+  tom:   { pitch:220,  decay:0.42 },
+  rim:   { pitch:1700, decay:0.035 },
+  clap:  { spread:0.011, decay:0.32 },
+  crash: { cut:4000,   decay:1.6 }
+};
+// [키, 이름, 최소, 최대, 간격, 단위]
+const SPEC = {
+  kick:  [['pitch','시작 피치',80,300,1,'Hz'],   ['decay','길이',0.15,0.9,0.01,'s']],
+  snare: [['pitch','톤 피치',120,280,1,'Hz'],    ['noise','노이즈',0.2,1,0.01,''], ['decay','길이',0.08,0.4,0.01,'s']],
+  hat:   [['cut','필터',3000,12000,100,'Hz'],    ['decay','길이',0.02,0.15,0.005,'s']],
+  open:  [['cut','필터',3000,12000,100,'Hz'],    ['decay','길이',0.15,1,0.01,'s']],
+  tom:   [['pitch','피치',120,400,1,'Hz'],       ['decay','길이',0.2,0.9,0.01,'s']],
+  rim:   [['pitch','피치',900,2600,10,'Hz'],     ['decay','길이',0.02,0.12,0.005,'s']],
+  clap:  [['spread','퍼짐',0.006,0.024,0.001,'s'],['decay','길이',0.15,0.6,0.01,'s']],
+  crash: [['cut','필터',2000,8000,100,'Hz'],     ['decay','길이',0.6,3,0.05,'s']]
+};
+const PRESETS = {
+  '기본':   null,
+  '808':    { kick:{pitch:120,decay:0.8}, snare:{pitch:200,noise:0.6,decay:0.16}, hat:{cut:9000,decay:0.045},
+              open:{cut:9000,decay:0.6}, tom:{pitch:180,decay:0.6}, rim:{pitch:1900,decay:0.03},
+              clap:{spread:0.009,decay:0.4}, crash:{cut:5000,decay:2.2} },
+  '로파이': { kick:{pitch:170,decay:0.3}, snare:{pitch:150,noise:0.9,decay:0.12}, hat:{cut:4500,decay:0.05},
+              open:{cut:4500,decay:0.3}, tom:{pitch:260,decay:0.3}, rim:{pitch:1200,decay:0.05},
+              clap:{spread:0.015,decay:0.22}, crash:{cut:2500,decay:1} },
+  '단단하게':{ kick:{pitch:200,decay:0.24}, snare:{pitch:220,noise:0.7,decay:0.1}, hat:{cut:11000,decay:0.03},
+              open:{cut:11000,decay:0.22}, tom:{pitch:300,decay:0.25}, rim:{pitch:2300,decay:0.025},
+              clap:{spread:0.007,decay:0.18}, crash:{cut:7000,decay:0.8} }
+};
+const KITS = Object.keys(DEFAULTS);
+const LABEL = { kick:'킥', snare:'스네어', hat:'하이햇', open:'오픈햇',
+                tom:'톰', rim:'림샷', clap:'클랩', crash:'크래시' };
+
+const P = {};                                  // 지금 쓰는 값
+const STORE = 'beatbox.tuning.v1';
+function loadTuning(){
+  KITS.forEach(k => { P[k] = Object.assign({}, DEFAULTS[k]); });
+  try{
+    const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
+    KITS.forEach(k => saved[k] && Object.assign(P[k], saved[k]));
+  }catch(_){}                                   // file:// 등에서 막히면 그냥 기본값
+}
+function saveTuning(){
+  try{ localStorage.setItem(STORE, JSON.stringify(P)); }catch(_){}
+}
+loadTuning();
+
+/* ═══════════════════════════════════════════
    오디오 엔진
    ═══════════════════════════════════════════ */
-let ctx = null;        // AudioContext
-let master = null;     // 마스터 게인 → 리미터 → 스피커
-let noiseBuf = null;   // 노이즈 원본 (스네어·하이햇 공용)
+let ctx = null, master = null, noiseBuf = null;
 
-const el = {
-  gate:   document.getElementById('gate'),
-  start:  document.getElementById('start'),
-  err:    document.getElementById('gate-err'),
-  count:  document.getElementById('count'),
-  chords: document.getElementById('chords'),
-  combo:  document.getElementById('combo'),
-  status: document.getElementById('status'),
-  pads:   document.getElementById('pads')
-};
+const el = {};
+['gate','start','gate-err','count','chords','combo','status','pads',
+ 'tune','tune-open','tune-close','tune-chips','tune-sliders','tune-presets',
+ 'tune-play','tune-reset','tune-reset-all'].forEach(id => { el[id] = document.getElementById(id); });
 
 function initAudio(){
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -318,54 +462,47 @@ function initAudio(){
 function noiseSource(){
   const s = ctx.createBufferSource();
   s.buffer = noiseBuf;
-  s.loop = true;                       // 감쇠가 버퍼보다 길어도 끊기지 않게
+  s.loop = true;                       // 감쇠가 버퍼(0.5초)보다 길어도 끊기지 않게
   return s;
 }
-
-/* ── 킥: 사인파 150Hz → 50Hz 스윕 + 게인 감쇠 ── */
-function kick(t){
-  const o = ctx.createOscillator();
+function gainTo(node, t, peak, dur, attack){
   const g = ctx.createGain();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(150, t);
-  o.frequency.exponentialRampToValueAtTime(50, t + 0.11);
-
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(1, t + 0.004);   // 딸깍 소리 방지용 짧은 어택
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
-
-  o.connect(g).connect(master);
-  o.start(t);
-  o.stop(t + 0.45);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + (attack || 0.002));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  node.connect(g);
+  return g;
 }
 
-/* ── 스네어: 7kHz 하이패스 노이즈 + 180Hz 삼각파 ── */
-function snare(t){
-  const n  = noiseSource();
-  const hp = ctx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 7000;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.75, t);
-  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
-  n.connect(hp).connect(ng).connect(master);
-  n.start(t);
-  n.stop(t + 0.21);
-
-  const o  = ctx.createOscillator();
-  const og = ctx.createGain();
-  o.type = 'triangle';
-  o.frequency.setValueAtTime(180, t);
-  og.gain.setValueAtTime(0.45, t);
-  og.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-  o.connect(og).connect(master);
-  o.start(t);
-  o.stop(t + 0.14);
+/* ── 킥: 사인파를 시작 피치에서 3분의 1로 떨어뜨린다 ── */
+function kick(t, v){
+  const p = P.kick, o = ctx.createOscillator();
+  o.type = 'sine';
+  // 세게 칠수록 시작 피치가 조금 높다 = 어택이 밝아진다
+  o.frequency.setValueAtTime(p.pitch * (0.88 + 0.24 * v), t);
+  o.frequency.exponentialRampToValueAtTime(p.pitch / 3, t + p.decay * 0.26);
+  gainTo(o, t, v, p.decay, 0.004).connect(master);
+  o.start(t); o.stop(t + p.decay + 0.03);
 }
 
-/* ── 하이햇: 7kHz 하이패스 노이즈. 닫힘=짧게 / 열림=길게 ──
+/* ── 스네어: 하이패스 노이즈 + 삼각파 톤 ── */
+function snare(t, v){
+  const p = P.snare;
+  const n = noiseSource(), hp = ctx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 7000;
+  n.connect(hp);
+  gainTo(hp, t, p.noise * v, p.decay, 0.001).connect(master);
+  n.start(t); n.stop(t + p.decay + 0.03);
+
+  const o = ctx.createOscillator();
+  o.type = 'triangle'; o.frequency.setValueAtTime(p.pitch, t);
+  gainTo(o, t, 0.6 * v, p.decay * 0.7, 0.002).connect(master);
+  o.start(t); o.stop(t + p.decay * 0.7 + 0.02);
+}
+
+/* ── 하이햇: 하이패스 노이즈. 닫힘=짧게 / 열림=길게 ──
    진짜 드럼에서 닫힌 하이햇은 울리던 오픈 하이햇을 끊는다(choke). */
-let openHat = null;          // { gain, source } — choke 대상
+let openHat = null;
 const openPad = document.querySelector('.pad[data-k="open"]');
 
 function chokeOpenHat(t){
@@ -379,26 +516,20 @@ function chokeOpenHat(t){
   openPad.classList.remove('ringing');
 }
 
-function hat(t, open){
-  chokeOpenHat(t);                                     // 닫힘/열림 어느 쪽이든 이전 오픈햇은 정리
-
-  const dur = open ? 0.45 : 0.06;
-  const n   = noiseSource();
-  const hp  = ctx.createBiquadFilter();
-  hp.type = 'highpass';
-  hp.frequency.value = 7000;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(open ? 0.45 : 0.38, t);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-
-  n.connect(hp).connect(g).connect(master);
-  n.start(t);
-  n.stop(t + dur + 0.06);
+function hat(t, v, open){
+  chokeOpenHat(t);                     // 닫힘/열림 어느 쪽이든 이전 오픈햇은 정리
+  const p = open ? P.open : P.hat;
+  const n = noiseSource(), hp = ctx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = p.cut;
+  n.connect(hp);
+  const g = gainTo(hp, t, (open ? 0.5 : 0.42) * v, p.decay, 0.001);
+  g.connect(master);
+  n.start(t); n.stop(t + p.decay + 0.06);
 
   if(open){
     openHat = { gain:g, source:n };
     openPad.classList.add('ringing');
-    n.onended = () => {                                // 스스로 다 울리고 끝난 경우
+    n.onended = () => {                // 스스로 다 울리고 끝난 경우
       if(openHat && openHat.source === n){
         openHat = null;
         openPad.classList.remove('ringing');
@@ -407,29 +538,104 @@ function hat(t, open){
   }
 }
 
+/* ── 톰: 킥과 같은 원리인데 더 높고 덜 떨어진다 + 어택 노이즈 ── */
+function tom(t, v){
+  const p = P.tom, o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(p.pitch * (0.92 + 0.16 * v), t);
+  o.frequency.exponentialRampToValueAtTime(p.pitch * 0.55, t + p.decay * 0.8);
+  gainTo(o, t, 0.85 * v, p.decay, 0.004).connect(master);
+  o.start(t); o.stop(t + p.decay + 0.03);
+
+  const n = noiseSource(), hp = ctx.createBiquadFilter();
+  hp.type = 'highpass'; hp.frequency.value = 2000;
+  n.connect(hp);
+  gainTo(hp, t, 0.14 * v, 0.03, 0.001).connect(master);
+  n.start(t); n.stop(t + 0.06);
+}
+
+/* ── 림샷: 아주 짧고 단단한 '딱'. 좁은 밴드패스로 나무 느낌을 낸다 ── */
+function rim(t, v){
+  const p = P.rim;
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = p.pitch; bp.Q.value = 2.6;
+  bp.connect(master);
+
+  const mix = ctx.createGain();
+  mix.gain.setValueAtTime(0.0001, t);
+  mix.gain.exponentialRampToValueAtTime(0.75 * v, t + 0.001);
+  mix.gain.exponentialRampToValueAtTime(0.0001, t + p.decay);
+  mix.connect(bp);
+
+  const o1 = ctx.createOscillator(); o1.type = 'triangle'; o1.frequency.setValueAtTime(p.pitch, t);
+  const o2 = ctx.createOscillator(); o2.type = 'square';   o2.frequency.setValueAtTime(p.pitch * 0.42, t);
+  const o2g = ctx.createGain(); o2g.gain.value = 0.35;
+  o1.connect(mix); o2.connect(o2g).connect(mix);
+  o1.start(t); o2.start(t);
+  o1.stop(t + p.decay + 0.02); o2.stop(t + p.decay + 0.02);
+
+  const n = noiseSource();
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.35 * v, t);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + p.decay * 0.6);
+  n.connect(ng).connect(bp);
+  n.start(t); n.stop(t + p.decay + 0.02);
+}
+
+/* ── 클랩: 노이즈를 아주 짧은 간격으로 세 번 튕기고 꼬리를 길게 ──
+   손뼉 소리의 정체는 이 '세 번 튀는' 구조다. */
+function clap(t, v){
+  const p = P.clap;
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 0.85;
+  bp.connect(master);
+
+  const n = noiseSource();
+  const g = ctx.createGain();
+  n.connect(g).connect(bp);
+
+  g.gain.setValueAtTime(0.0001, t);
+  for(let i = 0; i < 3; i++){
+    const tt = t + i * p.spread;
+    g.gain.setValueAtTime(0.9 * v, tt);
+    g.gain.exponentialRampToValueAtTime(0.12 * v, tt + p.spread * 0.9);
+  }
+  const tail = t + 3 * p.spread;
+  g.gain.setValueAtTime(0.9 * v, tail);
+  g.gain.exponentialRampToValueAtTime(0.0001, tail + p.decay);
+  n.start(t); n.stop(tail + p.decay + 0.05);
+}
+
+/* ── 크래시: 길게 남는 고역 노이즈 + 8kHz 부근을 들어올려 금속 느낌 ── */
+function crash(t, v){
+  const p = P.crash;
+  const n = noiseSource();
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = p.cut;
+  const pk = ctx.createBiquadFilter(); pk.type = 'peaking';  pk.frequency.value = 8000; pk.gain.value = 7; pk.Q.value = 0.7;
+  n.connect(hp).connect(pk);
+  gainTo(pk, t, 0.5 * v, p.decay, 0.006).connect(master);
+  n.start(t); n.stop(t + p.decay + 0.05);
+}
+
 const VOICES = {
-  kick:  t => kick(t),
-  snare: t => snare(t),
-  hat:   t => hat(t, false),
-  open:  t => hat(t, true)
+  kick, snare, tom, rim, clap, crash,
+  hat:  (t, v) => hat(t, v, false),
+  open: (t, v) => hat(t, v, true)
 };
-const LABEL = { kick:'킥', snare:'스네어', hat:'하이햇', open:'오픈햇' };
 
 /* ═══════════════════════════════════════════
    재생 + 화면 피드백
    ═══════════════════════════════════════════ */
 let hits = 0, chordCount = 0;
-const perPad = { kick:0, snare:0, hat:0, open:0 };
-const padEl  = {};
+const perPad = {}; KITS.forEach(k => perPad[k] = 0);
+const padEl = {};
 document.querySelectorAll('.pad').forEach(p => { padEl[p.dataset.k] = p; });
 
 /* 폰에서 화면을 껐다 켜거나 탭을 옮기면 컨텍스트가 suspended/interrupted가 된다.
    재생 직전에 매번 확인해서 되살린다. */
 function ensureRunning(){
-  if(!ctx) return;
-  if(ctx.state !== 'running') ctx.resume().then(showStatus, showStatus);
+  if(ctx && ctx.state !== 'running') ctx.resume().then(showStatus, showStatus);
 }
-
 function showStatus(){
   if(!ctx) return;
   const bad = ctx.state !== 'running';
@@ -439,24 +645,24 @@ function showStatus(){
 }
 
 /* 두 손가락이 "동시에" 닿아도 이벤트는 보통 5~20ms 어긋나 도착한다.
-   그걸 억지로 한 시각에 맞추려면 그만큼 미리보기 지연을 깔아야 하는데,
+   그걸 한 시각에 맞추려면 그만큼 미리보기 지연을 깔아야 하는데,
    드럼 패드에서 지연은 어긋남보다 훨씬 나쁘다. 게다가 음색이 다른 타악기 두 개는
-   20~30ms 안쪽이면 사람 귀에 한 방으로 붙어 들린다. 그래서 맞추지 않고 그냥 바로 낸다.
-   (같은 JS 태스크에서 처리된 타격끼리는 currentTime이 그대로라 자연히 정렬된다.) */
-function play(k, x, y, src){
+   20~30ms 안쪽이면 사람 귀에 한 방으로 붙어 들린다. 그래서 맞추지 않고 바로 낸다. */
+function play(k, x, y, src, v){
   if(!ctx || !VOICES[k]) return;
   ensureRunning();
+  v = Math.max(0.15, Math.min(1, v == null ? 0.9 : v));
 
   // 이미 지난 시각에 예약하면 클릭 노이즈가 난다 → 항상 살짝 앞으로
-  try { VOICES[k](ctx.currentTime + 0.002); } catch(e){ console.error(e); }
+  try { VOICES[k](ctx.currentTime + 0.002, v); } catch(e){ console.error(e); }
 
-  hits++;
-  perPad[k]++;
+  hits++; perPad[k]++;
   el.count.textContent = hits + ' hits';
 
   const p = padEl[k];
   p.querySelector('.n').textContent = perPad[k];
   p.classList.add('used');
+  p.style.setProperty('--v', v.toFixed(2));
 
   // 연타할 때 애니메이션이 다시 처음부터 돌게 리플로우를 강제
   p.classList.remove('hit');
@@ -465,30 +671,42 @@ function play(k, x, y, src){
   clearTimeout(p._t);
   p._t = setTimeout(() => p.classList.remove('hit'), 95);
 
-  if(x != null) ripple(p, x, y);
-  try { navigator.vibrate && navigator.vibrate(8); } catch(_){}
+  if(x != null) ripple(p, x, y, v);
+  try { navigator.vibrate && navigator.vibrate(Math.round(4 + 8 * v)); } catch(_){}
   noteForChord(k, src);
 }
 
-function ripple(p, clientX, clientY){
+function ripple(p, clientX, clientY, v){
   const r = p.getBoundingClientRect();
   const s = document.createElement('span');
   s.className = 'ripple';
   s.style.left = (clientX - r.left) + 'px';
   s.style.top  = (clientY - r.top)  + 'px';
+  s.style.setProperty('--rs', (10 + 18 * v).toFixed(1));   // 세게 칠수록 크게 번진다
+  s.style.opacity = (0.14 + 0.26 * v).toFixed(2);
   p.appendChild(s);
   setTimeout(() => s.remove(), 450);
+}
+
+/* ── 세기 ──
+   진짜 드럼처럼 가운데를 치면 세고 가장자리로 갈수록 약하다.
+   접촉 면적이나 pressure는 기기마다 0을 주거나 아예 안 줘서 못 믿는다.
+   타격 위치는 어디서나 정확하고, 무엇보다 사용자가 배울 수 있다. */
+function velocityAt(p, x, y){
+  const r = p.getBoundingClientRect();
+  const dx = (x - (r.left + r.width  / 2)) / (r.width  / 2);
+  const dy = (y - (r.top  + r.height / 2)) / (r.height / 2);
+  const d = Math.min(1, Math.hypot(dx, dy) / 1.1);
+  return 1 - 0.6 * d * d;              // 가운데 1.0 → 모서리 0.4
 }
 
 /* ── 동시 타격 인식 ──
    "동시"의 기준을 시간만으로 잡으면 빠른 롤까지 조합으로 오인한다.
    진짜 기준은 손가락이 다른가다 — 같은 손가락(pointerId)이 패드를 쓸고 지나간 건
    아무리 빨라도 조합이 아니다. 그래서 서로 다른 입력원이 COMBO_MS 안에 들어온
-   경우만 조합으로 본다. 덕분에 창을 60ms로 넉넉히 잡아도 롤이 오인되지 않는다.
-   (두 손가락을 정말 동시에 내리쳐도 실제로는 그 정도 어긋난다.) */
+   경우만 조합으로 본다. 덕분에 창을 60ms로 넉넉히 잡아도 롤이 오인되지 않는다. */
 const COMBO_MS = 60;
-let recent = [];             // {k, src, t}
-let comboSize = 0;           // 지금 표시 중인 조합의 크기
+let recent = [], comboSize = 0;
 
 function noteForChord(k, src){
   if(src == null) return;
@@ -498,15 +716,12 @@ function noteForChord(k, src){
 
   const keys = [...new Set(recent.map(h => h.k))];
   if(keys.length < 2){ comboSize = 0; return; }
-
-  // 2화음을 띄운 뒤 같은 묶음에서 3화음으로 커지면 다시 그린다
-  if(keys.length <= comboSize) return;
+  if(keys.length <= comboSize) return;     // 이미 띄운 조합이면 다시 그리지 않는다
   if(comboSize === 0) chordCount++;
   comboSize = keys.length;
 
   el.chords.textContent = '동시 ' + chordCount;
   el.chords.classList.add('on');
-
   el.combo.innerHTML = keys
     .map(c => `<i style="background:var(--${c})"></i>${LABEL[c]}`)
     .join('<span class="plus">＋</span>');
@@ -518,14 +733,11 @@ function noteForChord(k, src){
 /* ═══════════════════════════════════════════
    입력 — 터치 우선, 키보드는 보너스
    ═══════════════════════════════════════════ */
-
-/* pointerdown 하나로 터치·마우스·펜을 모두 받는다.
-   손가락(pointerId)마다 따로 추적해서 몇 개를 동시에 올려도 각자 울린다. */
 const touching = new Map();            // pointerId → 지금 눌린 패드 key
 
 function markHeld(){
   const on = new Set(touching.values());
-  for(const k in padEl) padEl[k].classList.toggle('held', on.has(k));
+  KITS.forEach(k => padEl[k].classList.toggle('held', on.has(k)));
 }
 
 el.pads.addEventListener('pointerdown', e => {
@@ -534,7 +746,7 @@ el.pads.addEventListener('pointerdown', e => {
   e.preventDefault();                  // 300ms 지연, 고스트 클릭, 길게 눌러 선택 방지
   touching.set(e.pointerId, p.dataset.k);
   markHeld();
-  play(p.dataset.k, e.clientX, e.clientY, 'p' + e.pointerId);
+  play(p.dataset.k, e.clientX, e.clientY, 'p' + e.pointerId, velocityAt(p, e.clientX, e.clientY));
 }, { passive:false });
 
 /* 손가락을 뗀 채로 패드를 쓸면 지나가는 패드마다 울린다 (드럼 롤).
@@ -544,36 +756,39 @@ el.pads.addEventListener('pointermove', e => {
   if(!touching.has(e.pointerId)) return;
   const under = document.elementFromPoint(e.clientX, e.clientY);
   const p = under && under.closest ? under.closest('.pad') : null;
-  if(!p || p.dataset.k === touching.get(e.pointerId)) return;   // 같은 패드 안에서 꼼지락대는 건 무시
+  if(!p || p.dataset.k === touching.get(e.pointerId)) return;   // 같은 패드 안 꼼지락은 무시
   touching.set(e.pointerId, p.dataset.k);
   markHeld();
-  // 같은 손가락이 이어서 낸 소리라 조합이 아니다 → 같은 src를 그대로 쓴다
-  play(p.dataset.k, e.clientX, e.clientY, 'p' + e.pointerId);
+  // 같은 손가락이 이어서 낸 소리라 조합이 아니다 → src를 그대로 쓴다.
+  // 쓸고 지나가는 건 살짝 스치는 것이므로 세기도 낮춘다.
+  play(p.dataset.k, e.clientX, e.clientY, 'p' + e.pointerId, velocityAt(p, e.clientX, e.clientY) * 0.75);
 }, { passive:false });
 
 function release(e){
-  if(!touching.delete(e.pointerId)) return;
-  markHeld();
+  if(touching.delete(e.pointerId)) markHeld();
 }
 // 패드 밖에서 손을 떼도 확실히 정리되게 창 전체에서 받는다
 ['pointerup','pointercancel'].forEach(t => addEventListener(t, release));
 el.pads.addEventListener('contextmenu', e => e.preventDefault());
 
-/* 키보드도 동시 입력이 된다. 킥은 다른 손 엄지로 칠 수 있게 스페이스도 받는다. */
-const KEYS = { a:'kick', s:'snare', d:'hat', f:'open', ' ':'kick' };
+/* 키보드도 동시 입력이 된다.
+   왼손 A S D F = 드럼 몸통, 오른손 J K L ; = 심벌 — 화면 배치와 그대로 맞다.
+   킥은 다른 손 엄지로 칠 수 있게 스페이스도 받는다. Shift를 같이 누르면 강타. */
+const KEYS = { a:'kick', s:'snare', d:'tom', f:'rim',
+               j:'hat',  k:'open',  l:'clap', ';':'crash', ' ':'kick' };
 const held = new Set();
 
 addEventListener('keydown', e => {
   if(e.metaKey || e.ctrlKey || e.altKey) return;
   const key = e.key.toLowerCase();
   const k = KEYS[key];
-  if(!k) return;
+  if(!k || !el.tune.hidden) return;
   e.preventDefault();                  // 스페이스로 페이지가 스크롤되지 않게
   // 꾹 누르고 있을 때 연속 발사 방지 — e.repeat과 자체 상태를 둘 다 본다
   if(e.repeat || held.has(key)) return;
   held.add(key);
   padEl[k].classList.add('held');
-  play(k, null, null, 'k' + key);
+  play(k, null, null, 'k' + key, e.shiftKey ? 1 : 0.82);
 });
 addEventListener('keyup', e => {
   const key = e.key.toLowerCase();
@@ -584,18 +799,109 @@ addEventListener('keyup', e => {
 });
 // 탭을 벗어나면 keyup을 못 받아 키가 눌린 채로 남는다 → 초기화
 addEventListener('blur', () => {
-  held.clear();
-  touching.clear();
-  for(const k in padEl) padEl[k].classList.remove('held');
+  held.clear(); touching.clear();
+  KITS.forEach(k => padEl[k].classList.remove('held'));
+});
+
+/* ═══════════════════════════════════════════
+   사운드 튜닝 패널
+   ═══════════════════════════════════════════ */
+let tuning = 'kick';
+
+function fmt(val, unit){
+  if(unit === 'Hz') return Math.round(val) + ' Hz';
+  if(unit === 's')  return Math.round(val * 1000) + ' ms';
+  return val.toFixed(2);
+}
+
+function buildChips(){
+  el['tune-chips'].innerHTML = '';
+  KITS.forEach(k => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip' + (k === tuning ? ' sel' : '');
+    b.style.setProperty('--cc', `var(--${k})`);
+    b.textContent = LABEL[k];
+    b.addEventListener('click', () => { tuning = k; buildChips(); buildSliders(); preview(); });
+    el['tune-chips'].appendChild(b);
+  });
+  el.tune.style.setProperty('--cc', `var(--${tuning})`);
+}
+
+function buildSliders(){
+  const wrap = el['tune-sliders'];
+  wrap.innerHTML = '';
+  SPEC[tuning].forEach(([key, name, min, max, step, unit]) => {
+    const row = document.createElement('div');
+    row.className = 'slider';
+    const lab = document.createElement('div');
+    lab.className = 'lab';
+    const val = document.createElement('b');
+    val.textContent = fmt(P[tuning][key], unit);
+    lab.append(Object.assign(document.createElement('span'), { textContent:name }), val);
+
+    const r = document.createElement('input');
+    r.type = 'range'; r.min = min; r.max = max; r.step = step;
+    r.value = P[tuning][key];
+    r.setAttribute('aria-label', LABEL[tuning] + ' ' + name);
+    r.addEventListener('input', () => {
+      P[tuning][key] = parseFloat(r.value);
+      val.textContent = fmt(P[tuning][key], unit);
+      saveTuning();
+    });
+    // 손을 뗄 때 한 번 들려준다 — 슬라이더를 끄는 내내 울리면 정신없다
+    r.addEventListener('change', preview);
+    row.append(lab, r);
+    wrap.appendChild(row);
+  });
+}
+
+function buildPresets(){
+  el['tune-presets'].innerHTML = '';
+  Object.keys(PRESETS).forEach(name => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn'; b.textContent = name;
+    b.addEventListener('click', () => {
+      const preset = PRESETS[name];
+      KITS.forEach(k => {
+        P[k] = Object.assign({}, DEFAULTS[k], preset ? preset[k] : null);
+      });
+      saveTuning(); buildSliders(); preview();
+    });
+    el['tune-presets'].appendChild(b);
+  });
+}
+
+function preview(){
+  if(!ctx) return;
+  ensureRunning();
+  try { VOICES[tuning](ctx.currentTime + 0.002, 0.95); } catch(e){ console.error(e); }
+}
+
+el['tune-open'].addEventListener('click', () => {
+  el.tune.hidden = false;
+  el['tune-open'].classList.add('on');
+  buildChips(); buildSliders(); buildPresets();
+});
+el['tune-close'].addEventListener('click', () => {
+  el.tune.hidden = true;
+  el['tune-open'].classList.remove('on');
+});
+el['tune-play'].addEventListener('click', preview);
+el['tune-reset'].addEventListener('click', () => {
+  P[tuning] = Object.assign({}, DEFAULTS[tuning]);
+  saveTuning(); buildSliders(); preview();
+});
+el['tune-reset-all'].addEventListener('click', () => {
+  KITS.forEach(k => { P[k] = Object.assign({}, DEFAULTS[k]); });
+  saveTuning(); buildSliders(); preview();
 });
 
 /* ═══════════════════════════════════════════
    생명주기
    ═══════════════════════════════════════════ */
 document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible' && ctx){
-    ctx.resume().then(showStatus, showStatus);
-  }
+  if(document.visibilityState === 'visible' && ctx) ctx.resume().then(showStatus, showStatus);
 });
 
 let gateOpened = false;
@@ -606,7 +912,7 @@ function openGate(){
   try{
     if(!ctx) initAudio();
   }catch(err){
-    el.err.textContent = err.message || '오디오를 시작할 수 없습니다.';
+    el['gate-err'].textContent = err.message || '오디오를 시작할 수 없습니다.';
     el.start.disabled = false;
     gateOpened = false;
     return;
@@ -618,13 +924,39 @@ function openGate(){
     setTimeout(() => { el.gate.hidden = true; }, 300);
   });
 }
-
 el.start.addEventListener('click', openGate);
 // 게이트가 떠 있을 때 아무 키나 눌러도 열리게 (데스크톱 편의)
 addEventListener('keydown', e => {
   if(gateOpened || e.key === 'Tab') return;
   openGate();
 });
+
+/* ═══════════════════════════════════════════
+   설치 (PWA)
+   아이콘·매니페스트를 파일 안에 넣어서 index.html 하나로 설치까지 된다.
+   오프라인 캐시는 서비스워커가 있어야 하는데 그건 별도 파일이어야만 해서
+   sw.js가 있으면 쓰고 없으면 조용히 넘어간다 — 앱 동작에는 영향이 없다.
+   ═══════════════════════════════════════════ */
+const ICON = 'data:image/png;base64,' + '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';
+try{
+  document.querySelector('link[rel="apple-touch-icon"]').href = ICON;
+  document.querySelector('link[rel="icon"]').href = ICON;
+  const manifest = {
+    name:'비트박스 올인원', short_name:'비트박스',
+    start_url:location.pathname, scope:location.pathname.replace(/[^/]*$/, ''),
+    display:'standalone', orientation:'any',
+    background_color:'#0b0c10', theme_color:'#0b0c10',
+    description:'음원 파일 없이 코드로 소리를 만드는 비트박스 사운드보드',
+    icons:[{ src:ICON, sizes:'192x192', type:'image/png', purpose:'any' }]
+  };
+  document.querySelector('link[rel="manifest"]').href =
+    'data:application/manifest+json;base64,' +
+    btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(manifest))));
+}catch(e){ console.warn('manifest', e); }
+
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 
 })();
 </script>
