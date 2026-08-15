@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0c10">
+<meta name="description" content="음원 파일 없이 Web Audio API로 소리를 합성하는 비트박스 사운드보드">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>비트박스 올인원 v0.1</title>
+<style>
+  :root{
+    --bg:#0b0c10;
+    --panel:#14161d;
+    --panel-2:#1a1d26;
+    --line:#252936;
+    --txt:#e8eaf2;
+    --dim:#767d93;
+    --kick:#ff5f52;
+    --snare:#ffb03a;
+    --hat:#2fd0bb;
+    --open:#7b9bff;
+    --safe-b:env(safe-area-inset-bottom,0px);
+    --safe-t:env(safe-area-inset-top,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  html{background:var(--bg);}
+  body{
+    background:var(--bg);
+    color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    display:flex;flex-direction:column;
+    gap:12px;
+    padding:calc(14px + var(--safe-t)) 14px calc(12px + var(--safe-b));
+    overscroll-behavior:none;
+    touch-action:manipulation;
+    -webkit-user-select:none;user-select:none;
+  }
+
+  /* ── 헤더 ─────────────────────────────── */
+  header{flex:0 0 auto;display:flex;align-items:baseline;gap:8px;}
+  h1{font-size:16px;margin:0;letter-spacing:-.3px;font-weight:700;}
+  .ver{font-size:12px;color:var(--dim);font-weight:500;}
+  .hint{margin-left:auto;font-size:11px;color:var(--dim);}
+
+  /* ── 시작 게이트 ───────────────────────
+     브라우저는 사용자 제스처 전에 오디오를 막는다.
+     이 버튼이 그 "첫 제스처" 역할을 한다. */
+  #gate{
+    position:fixed;inset:0;z-index:50;
+    background:radial-gradient(120% 90% at 50% 0%,#171a24 0%,var(--bg) 60%);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:16px;padding:28px;text-align:center;
+    transition:opacity .28s ease;
+  }
+  #gate.off{opacity:0;pointer-events:none;}
+  #gate[hidden]{display:none;}   /* id 선택자가 세서 [hidden] 기본 규칙을 덮어쓴다 */
+  #gate .logo{font-size:44px;line-height:1;}
+  #gate h2{margin:0;font-size:21px;letter-spacing:-.4px;}
+  #gate p{margin:0;color:var(--dim);font-size:13px;line-height:1.65;max-width:300px;}
+  #start{
+    margin-top:6px;padding:17px 46px;font:inherit;font-size:16px;font-weight:700;
+    background:var(--txt);color:var(--bg);border:0;border-radius:16px;cursor:pointer;
+    transition:transform .08s ease;
+  }
+  #start:active{transform:scale(.96);}
+  #start:disabled{opacity:.5;}
+  .fineprint{font-size:11px !important;line-height:1.6;opacity:.8;}
+  #gate .err{color:var(--kick);font-size:12px;min-height:1em;}
+
+  /* ── 패드 ─────────────────────────────── */
+  .pads{
+    flex:1 1 auto;min-height:0;
+    display:grid;
+    grid-template-columns:repeat(2,1fr);
+    grid-template-rows:repeat(2,1fr);
+    gap:11px;
+  }
+  .pad{
+    position:relative;overflow:hidden;
+    font:inherit;color:inherit;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:20px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+    cursor:pointer;
+    touch-action:none;           /* 스크롤/줌에 터치를 뺏기지 않게 */
+    transition:transform .05s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease;
+  }
+  .pad .name{font-size:16px;font-weight:700;letter-spacing:-.3px;}
+  .pad .key{
+    font-size:11px;color:var(--dim);
+    border:1px solid var(--line);border-radius:7px;
+    padding:3px 9px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    transition:color .16s ease,border-color .16s ease;
+  }
+  .pad .dot{
+    position:absolute;top:13px;right:13px;
+    width:8px;height:8px;border-radius:50%;
+    background:var(--c);opacity:.45;
+    transition:opacity .16s ease,box-shadow .16s ease;
+  }
+  .pad .n{
+    position:absolute;bottom:11px;left:14px;
+    font-size:10px;color:var(--dim);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    opacity:0;transition:opacity .2s ease;
+  }
+  .pad.used .n{opacity:.75;}
+
+  .pad[data-k="kick"] {--c:var(--kick); --tint:#2c1614;}
+  .pad[data-k="snare"]{--c:var(--snare);--tint:#2b2011;}
+  .pad[data-k="hat"]  {--c:var(--hat);  --tint:#10241f;}
+  .pad[data-k="open"] {--c:var(--open); --tint:#171c2e;}
+
+  .pad.hit{
+    transform:scale(.962);
+    background:var(--tint);
+    border-color:var(--c);
+    box-shadow:0 0 0 1px var(--c) inset,0 0 26px -6px var(--c);
+  }
+  .pad.hit .dot{opacity:1;box-shadow:0 0 10px 1px var(--c);}
+  .pad.hit .key{color:var(--c);border-color:var(--c);}
+
+  /* 오픈햇이 아직 울리는 중이라는 표시 (choke 대상) */
+  .pad[data-k="open"].ringing .dot{opacity:1;animation:pulse 1.2s ease-in-out infinite;}
+  @keyframes pulse{50%{opacity:.35;}}
+
+  /* 터치 지점에서 퍼지는 링 */
+  .ripple{
+    position:absolute;border-radius:50%;pointer-events:none;
+    width:12px;height:12px;margin:-6px 0 0 -6px;
+    background:var(--c);opacity:.32;
+    animation:ripple .42s ease-out forwards;
+  }
+  @keyframes ripple{to{transform:scale(26);opacity:0;}}
+
+  /* ── 푸터 ─────────────────────────────── */
+  footer{
+    flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    font-size:11px;color:var(--dim);
+  }
+  #count{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--txt);opacity:.85;}
+  #status{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    padding:3px 8px;border:1px solid var(--line);border-radius:999px;
+  }
+  #status.bad{color:var(--snare);border-color:var(--snare);}
+
+  @media (min-width:620px){
+    body{max-width:640px;margin:0 auto;padding-top:22px;}
+    .pads{gap:14px;}
+    .pad .name{font-size:18px;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation-duration:.01ms !important;transition-duration:.01ms !important;}
+  }
+</style>
+</head>
+<body>
+
+<!-- 오디오 게이트: 첫 사용자 제스처를 받아 AudioContext를 연다 -->
+<div id="gate">
+  <div class="logo">🥁</div>
+  <h2>비트박스 올인원</h2>
+  <p><b>v0.1 — 사운드보드</b><br>패드를 누르거나 <b>A · S · D · F</b> 키로 소리를 냅니다.<br>음원 파일 없이 코드로 소리를 만듭니다.</p>
+  <button id="start" type="button">시작하기</button>
+  <p class="fineprint">브라우저는 한 번 눌러주기 전까지 소리를 막아둡니다.<br>그래서 이 버튼이 필요해요.</p>
+  <p class="err" id="gate-err"></p>
+</div>
+
+<header>
+  <h1>비트박스 올인원</h1>
+  <span class="ver">v0.1</span>
+  <span class="hint">터치 · A S D F</span>
+</header>
+
+<main class="pads" id="pads">
+  <button class="pad" type="button" data-k="kick"  tabindex="-1" aria-label="킥">
+    <span class="dot"></span><span class="name">킥</span><span class="key">A</span><span class="n">0</span>
+  </button>
+  <button class="pad" type="button" data-k="snare" tabindex="-1" aria-label="스네어">
+    <span class="dot"></span><span class="name">스네어</span><span class="key">S</span><span class="n">0</span>
+  </button>
+  <button class="pad" type="button" data-k="hat"   tabindex="-1" aria-label="하이햇">
+    <span class="dot"></span><span class="name">하이햇</span><span class="key">D</span><span class="n">0</span>
+  </button>
+  <button class="pad" type="button" data-k="open"  tabindex="-1" aria-label="오픈 하이햇">
+    <span class="dot"></span><span class="name">오픈 하이햇</span><span class="key">F</span><span class="n">0</span>
+  </button>
+</main>
+
+<footer>
+  <span>다음 → v0.2 루프스테이션 (REC · 레이어)</span>
+  <span id="status" hidden></span>
+  <span id="count">0 hits</span>
+</footer>
+
+<script>
+(() => {
+'use strict';
+
+/* ═══════════════════════════════════════════
+   오디오 엔진
+   ═══════════════════════════════════════════ */
+let ctx = null;        // AudioContext
+let master = null;     // 마스터 게인 → 리미터 → 스피커
+let noiseBuf = null;   // 노이즈 원본 (스네어·하이햇 공용)
+
+const el = {
+  gate:   document.getElementById('gate'),
+  start:  document.getElementById('start'),
+  err:    document.getElementById('gate-err'),
+  count:  document.getElementById('count'),
+  status: document.getElementById('status'),
+  pads:   document.getElementById('pads')
+};
+
+function initAudio(){
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if(!AC) throw new Error('이 브라우저는 Web Audio를 지원하지 않습니다.');
+  ctx = new AC();
+
+  // 연타해도 찌그러지지 않게 리미터를 물린다
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -6;
+  limiter.knee.value      = 6;
+  limiter.ratio.value     = 12;
+  limiter.attack.value    = 0.002;
+  limiter.release.value   = 0.12;
+
+  master = ctx.createGain();
+  master.gain.value = 0.9;
+  master.connect(limiter).connect(ctx.destination);
+
+  // 노이즈는 한 번만 만들어 두고 재생할 때마다 재사용
+  const len = Math.floor(ctx.sampleRate * 0.5);
+  noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = noiseBuf.getChannelData(0);
+  for(let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+}
+
+function noiseSource(){
+  const s = ctx.createBufferSource();
+  s.buffer = noiseBuf;
+  s.loop = true;                       // 감쇠가 버퍼보다 길어도 끊기지 않게
+  return s;
+}
+
+/* ── 킥: 사인파 150Hz → 50Hz 스윕 + 게인 감쇠 ── */
+function kick(t){
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(150, t);
+  o.frequency.exponentialRampToValueAtTime(50, t + 0.11);
+
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(1, t + 0.004);   // 딸깍 소리 방지용 짧은 어택
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+
+  o.connect(g).connect(master);
+  o.start(t);
+  o.stop(t + 0.45);
+}
+
+/* ── 스네어: 7kHz 하이패스 노이즈 + 180Hz 삼각파 ── */
+function snare(t){
+  const n  = noiseSource();
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 7000;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.75, t);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+  n.connect(hp).connect(ng).connect(master);
+  n.start(t);
+  n.stop(t + 0.21);
+
+  const o  = ctx.createOscillator();
+  const og = ctx.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(180, t);
+  og.gain.setValueAtTime(0.45, t);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+  o.connect(og).connect(master);
+  o.start(t);
+  o.stop(t + 0.14);
+}
+
+/* ── 하이햇: 7kHz 하이패스 노이즈. 닫힘=짧게 / 열림=길게 ──
+   진짜 드럼에서 닫힌 하이햇은 울리던 오픈 하이햇을 끊는다(choke). */
+let openHat = null;          // { gain, source, stopAt } — choke 대상
+const openPad = document.querySelector('.pad[data-k="open"]');
+
+function chokeOpenHat(t){
+  if(!openHat) return;
+  const g = openHat.gain.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(Math.max(g.value, 0.0001), t);
+  g.exponentialRampToValueAtTime(0.0001, t + 0.028);   // 뚝 끊지 않고 아주 짧게 닫는다
+  try { openHat.source.stop(t + 0.05); } catch(_){}
+  openHat = null;
+  openPad.classList.remove('ringing');
+}
+
+function hat(t, open){
+  chokeOpenHat(t);                                     // 닫힘/열림 어느 쪽이든 이전 오픈햇은 정리
+
+  const dur = open ? 0.45 : 0.06;
+  const n   = noiseSource();
+  const hp  = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 7000;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(open ? 0.45 : 0.38, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  n.connect(hp).connect(g).connect(master);
+  n.start(t);
+  const stopAt = t + dur + 0.06;
+  n.stop(stopAt);
+
+  if(open){
+    openHat = { gain:g, source:n, stopAt };
+    openPad.classList.add('ringing');
+    n.onended = () => {                                // 스스로 다 울리고 끝난 경우
+      if(openHat && openHat.source === n){
+        openHat = null;
+        openPad.classList.remove('ringing');
+      }
+    };
+  }
+}
+
+const VOICES = {
+  kick:  t => kick(t),
+  snare: t => snare(t),
+  hat:   t => hat(t, false),
+  open:  t => hat(t, true)
+};
+
+/* ═══════════════════════════════════════════
+   재생 + 화면 피드백
+   ═══════════════════════════════════════════ */
+let hits = 0;
+const perPad = { kick:0, snare:0, hat:0, open:0 };
+const padEl  = {};
+document.querySelectorAll('.pad').forEach(p => { padEl[p.dataset.k] = p; });
+
+/* 폰에서 화면을 껐다 켜거나 탭을 옮기면 컨텍스트가 suspended/interrupted가 된다.
+   재생 직전에 매번 확인해서 되살린다. */
+function ensureRunning(){
+  if(!ctx) return false;
+  if(ctx.state !== 'running'){
+    ctx.resume().then(showStatus, showStatus);
+    return ctx.state === 'running';
+  }
+  return true;
+}
+
+function showStatus(){
+  if(!ctx) return;
+  const bad = ctx.state !== 'running';
+  el.status.hidden = !bad;
+  el.status.textContent = bad ? '오디오 일시정지 — 화면을 한 번 터치' : '';
+  el.status.classList.toggle('bad', bad);
+}
+
+function play(k, x, y){
+  if(!ctx || !VOICES[k]) return;
+  ensureRunning();
+
+  // 스케줄은 항상 "지금"보다 살짝 뒤로 — 이미 지나간 시각에 예약하면 클릭 노이즈가 난다
+  const t = ctx.currentTime + 0.001;
+  try { VOICES[k](t); } catch(e){ console.error(e); }
+
+  hits++;
+  perPad[k]++;
+  el.count.textContent = hits + ' hits';
+
+  const p = padEl[k];
+  p.querySelector('.n').textContent = perPad[k];
+  p.classList.add('used');
+
+  // 연타할 때 애니메이션이 다시 처음부터 돌게 리플로우를 강제
+  p.classList.remove('hit');
+  void p.offsetWidth;
+  p.classList.add('hit');
+  clearTimeout(p._t);
+  p._t = setTimeout(() => p.classList.remove('hit'), 95);
+
+  if(x != null) ripple(p, x, y);
+}
+
+function ripple(p, clientX, clientY){
+  const r = p.getBoundingClientRect();
+  const s = document.createElement('span');
+  s.className = 'ripple';
+  s.style.left = (clientX - r.left) + 'px';
+  s.style.top  = (clientY - r.top)  + 'px';
+  p.appendChild(s);
+  setTimeout(() => s.remove(), 450);
+}
+
+/* ═══════════════════════════════════════════
+   입력 — 터치 우선, 키보드는 보너스
+   ═══════════════════════════════════════════ */
+
+// pointerdown 하나로 터치·마우스·펜을 모두 받는다. 멀티터치도 그대로 동작한다.
+el.pads.addEventListener('pointerdown', e => {
+  const p = e.target.closest('.pad');
+  if(!p) return;
+  e.preventDefault();          // 300ms 지연, 고스트 클릭, 길게 눌러 선택 방지
+  play(p.dataset.k, e.clientX, e.clientY);
+}, { passive:false });
+
+// 패드 위에서 시작한 드래그가 스크롤로 번지지 않게
+el.pads.addEventListener('contextmenu', e => e.preventDefault());
+
+const KEYS = { a:'kick', s:'snare', d:'hat', f:'open' };
+const held = new Set();
+
+addEventListener('keydown', e => {
+  if(e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = KEYS[e.key.toLowerCase()];
+  if(!k) return;
+  e.preventDefault();
+  // 꾹 누르고 있을 때 연속 발사 방지 — e.repeat과 자체 상태를 둘 다 본다
+  if(e.repeat || held.has(k)) return;
+  held.add(k);
+  play(k);
+});
+addEventListener('keyup', e => {
+  const k = KEYS[e.key.toLowerCase()];
+  if(k) held.delete(k);
+});
+// 탭을 벗어나면 keyup을 못 받아 키가 눌린 채로 남는다 → 초기화
+addEventListener('blur', () => held.clear());
+
+/* ═══════════════════════════════════════════
+   생명주기
+   ═══════════════════════════════════════════ */
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && ctx){
+    ctx.resume().then(showStatus, showStatus);
+  }
+});
+
+let gateOpened = false;
+function openGate(){
+  if(gateOpened) return;
+  gateOpened = true;
+  el.start.disabled = true;
+  try{
+    if(!ctx) initAudio();
+  }catch(err){
+    el.err.textContent = err.message || '오디오를 시작할 수 없습니다.';
+    el.start.disabled = false;
+    gateOpened = false;
+    return;
+  }
+  // resume()은 프로미스라 실패할 수 있다. 실패해도 화면은 열고 상태 배지로 알린다.
+  Promise.resolve(ctx.resume()).catch(() => {}).then(() => {
+    showStatus();
+    el.gate.classList.add('off');
+    setTimeout(() => { el.gate.hidden = true; }, 300);
+  });
+}
+
+el.start.addEventListener('click', openGate);
+// 게이트가 떠 있을 때 아무 키나 눌러도 열리게 (데스크톱 편의)
+addEventListener('keydown', e => {
+  if(gateOpened || e.key === 'Tab') return;
+  openGate();
+});
+
+})();
+</script>
+</body>
+</html>
