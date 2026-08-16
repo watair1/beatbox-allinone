@@ -1783,16 +1783,24 @@ function encodeWAV(buf){
   dv.setUint32(24,sr,true); dv.setUint32(28,sr*ch*2,true);
   dv.setUint16(32,ch*2,true); dv.setUint16(34,16,true);
   wr(36,'data'); dv.setUint32(40, n*ch*2, true);
+  /* 채널 배열을 밖으로 빼야 한다. 루프 안에서 getChannelData()를 부르면
+     샘플 수만큼(수십만 번) 호출돼 메인 스레드가 몇 초씩 멈춘다 — 앱이 얼어붙는다. */
+  const chans = [];
+  for(let c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
   let o = 44;
   for(let i = 0; i < n; i++) for(let c = 0; c < ch; c++){
-    const s = Math.max(-1, Math.min(1, buf.getChannelData(c)[i]));
+    const s = Math.max(-1, Math.min(1, chans[c][i]));
     dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7FFF, true); o += 2;
   }
   return new Blob([ab], { type:'audio/wav' });
 }
 
-async function renderWAV(cycles){
+/* 긴 루프를 여러 바퀴 렌더하면 노드 수가 폭증해 저사양 기기에서 렌더러가 죽는다.
+   (헤드리스 크로미움에서 실제로 재현됐다.) 총 길이에 상한을 두고 바퀴 수를 줄인다. */
+const MAX_RENDER_SEC = 30;
+async function renderWAV(want){
   if(!LOOP.len) return null;
+  const cycles = Math.max(1, Math.min(want, Math.floor(MAX_RENDER_SEC / LOOP.len)));
   const sr = 44100, dur = LOOP.len * cycles + 0.6;
   const oc = new OfflineAudioContext(1, Math.ceil(sr * dur), sr);
   const realCtx = ctx, realMaster = master, realNoise = noiseBuf;
@@ -1852,13 +1860,14 @@ el['mk-wav'].addEventListener('click', async () => {
     const blob = await renderWAV(4);
     if(wavURL) URL.revokeObjectURL(wavURL);
     wavURL = URL.createObjectURL(blob);
+    const cyc = Math.max(1, Math.min(4, Math.floor(MAX_RENDER_SEC / LOOP.len)));
     /* 자동 클릭으로 내려받지 않는다.
        렌더링을 await한 뒤에는 사용자 제스처 컨텍스트가 끊겨 있어서, 그때 클릭을
        프로그램으로 날리면 새 탭이 차단되고 현재 탭이 blob으로 이동해버린다 —
        앱이 통째로 날아가고 만들던 루프도 같이 사라진다.
        그래서 링크만 띄우고 누르는 건 사용자에게 맡긴다. */
     el['more-out'].innerHTML =
-      `<b>4바퀴 · ${(blob.size / 1024).toFixed(0)}KB</b> 준비됐습니다.<br>` +
+      `<b>${cyc}바퀴 · ${(blob.size / 1024).toFixed(0)}KB</b> 준비됐습니다.<br>` +
       `<a class="btn" style="display:inline-block;margin-top:8px;color:var(--txt);border-color:var(--txt)" ` +
       `href="${wavURL}" download="beatbox-loop.wav">WAV 저장하기</a>`;
   }catch(e){ el['more-out'].textContent = '실패: ' + e.message; }
