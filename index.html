@@ -70,6 +70,25 @@
   /* 패드 — 왼쪽 열은 드럼 몸통·베이스, 오른쪽 열은 심벌·박수.
      자주 겹치는 조합이 좌우 다른 엄지에 걸리고,
      서로 choke 관계인 하이햇/오픈햇은 같은 엄지에 묶인다. */
+  .loopbar{
+    flex:0 0 auto;display:flex;align-items:center;gap:5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:5px 6px;
+  }
+  .lb{
+    font:inherit;font-size:11px;font-weight:700;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:6px 9px;cursor:pointer;white-space:nowrap;
+  }
+  .lb:active{transform:scale(.95);}
+  .lb.on{color:var(--txt);border-color:var(--txt);}
+  .lb.rec.armed{color:var(--s0);border-color:var(--s0);}
+  .lb.rec.recording{color:var(--bg);background:var(--s0);border-color:var(--s0);
+    animation:recblink .9s ease-in-out infinite;}
+  @keyframes recblink{50%{opacity:.55;}}
+  .lbar{flex:1 1 auto;height:4px;border-radius:2px;background:var(--line);overflow:hidden;min-width:20px;}
+  .lbar i{display:block;height:100%;width:0;background:var(--s4);}
+  .lstat{font-size:10px;color:var(--dim);white-space:nowrap;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
   .pads{
     position:relative;flex:1 1 auto;min-height:0;
     display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(4,1fr);
@@ -223,7 +242,26 @@
 
   @media (orientation:landscape) and (max-height:560px){
     body{gap:6px;padding-top:calc(6px + var(--safe-t));}
-    .pads{grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;
+    .loopbar{
+    flex:0 0 auto;display:flex;align-items:center;gap:5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:5px 6px;
+  }
+  .lb{
+    font:inherit;font-size:11px;font-weight:700;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:6px 9px;cursor:pointer;white-space:nowrap;
+  }
+  .lb:active{transform:scale(.95);}
+  .lb.on{color:var(--txt);border-color:var(--txt);}
+  .lb.rec.armed{color:var(--s0);border-color:var(--s0);}
+  .lb.rec.recording{color:var(--bg);background:var(--s0);border-color:var(--s0);
+    animation:recblink .9s ease-in-out infinite;}
+  @keyframes recblink{50%{opacity:.55;}}
+  .lbar{flex:1 1 auto;height:4px;border-radius:2px;background:var(--line);overflow:hidden;min-width:20px;}
+  .lbar i{display:block;height:100%;width:0;background:var(--s4);}
+  .lstat{font-size:10px;color:var(--dim);white-space:nowrap;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .pads{grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;
       grid-template-areas:"s0 s1 s4 s5" "s2 s3 s6 s7";}
     #combo{top:auto;bottom:8px;transform:translate(-50%,0) scale(1);}
     #combo.show{animation:comboLand 1s ease-out forwards;}
@@ -236,7 +274,26 @@
   }
   @media (min-width:620px) and (orientation:portrait){
     body{max-width:660px;margin:0 auto;padding-top:22px;}
-    .pads{gap:12px;} .pad .name{font-size:17px;}
+    .loopbar{
+    flex:0 0 auto;display:flex;align-items:center;gap:5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:5px 6px;
+  }
+  .lb{
+    font:inherit;font-size:11px;font-weight:700;color:var(--dim);
+    background:transparent;border:1px solid var(--line);border-radius:8px;
+    padding:6px 9px;cursor:pointer;white-space:nowrap;
+  }
+  .lb:active{transform:scale(.95);}
+  .lb.on{color:var(--txt);border-color:var(--txt);}
+  .lb.rec.armed{color:var(--s0);border-color:var(--s0);}
+  .lb.rec.recording{color:var(--bg);background:var(--s0);border-color:var(--s0);
+    animation:recblink .9s ease-in-out infinite;}
+  @keyframes recblink{50%{opacity:.55;}}
+  .lbar{flex:1 1 auto;height:4px;border-radius:2px;background:var(--line);overflow:hidden;min-width:20px;}
+  .lbar i{display:block;height:100%;width:0;background:var(--s4);}
+  .lstat{font-size:10px;color:var(--dim);white-space:nowrap;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  .pads{gap:12px;} .pad .name{font-size:17px;}
     .sheet{max-width:660px;margin:0 auto;}
   }
   @media (prefers-reduced-motion:reduce){
@@ -268,6 +325,15 @@
 </header>
 
 <!-- 패드는 킷에 따라 JS가 그린다. #combo는 여기 두고 renderPads가 다시 붙인다 -->
+<div class="loopbar" id="loopbar">
+  <button class="lb rec" id="rec" type="button">REC</button>
+  <button class="lb" id="stop" type="button">정지</button>
+  <button class="lb" id="metro" type="button">♩ 90</button>
+  <span class="lbar"><i id="lbarfill"></i></span>
+  <span class="lstat" id="lstat">비어 있음</span>
+  <button class="lb" id="loopmenu" type="button">…</button>
+</div>
+
 <main class="pads" id="pads"><div id="combo"></div></main>
 
 <footer>
@@ -289,6 +355,32 @@
   <p class="note">위에서 <b>바꿀 패드</b>를 고르고, 아래에서 소리를 누르면 그 자리에 들어갑니다. 누르면 미리 들려줍니다.</p>
   <div class="slotrow" id="lib-slots"></div>
   <div id="lib-list"></div>
+</div>
+
+<!-- 루프 -->
+<div class="sheet" id="loop" hidden>
+  <div class="thead">
+    <b>루프</b><span class="sub" id="loop-sub"></span>
+    <button class="btn" id="loop-close" type="button">닫기</button>
+  </div>
+  <div class="agroup">템포</div>
+  <div class="slider">
+    <div class="lab"><span>BPM</span><b id="bpmv">90</b></div>
+    <input type="range" id="bpm" min="50" max="200" step="1" value="90">
+  </div>
+  <div class="trow">
+    <button class="btn" id="countin">카운트인 <b id="countinv">켬</b></button>
+    <button class="btn" id="snap">마디 스냅 <b id="snapv">켬</b></button>
+    <button class="btn sp" id="metro2">메트로놈 <b id="metrov">끔</b></button>
+  </div>
+  <p class="note">REC를 누르고 그냥 치면 됩니다. 정지하면 녹음 길이를 재서 가장 가까운 마디로
+    맞춰 루프가 됩니다. 그 위에 REC를 다시 누르면 레이어가 쌓입니다.</p>
+  <div class="agroup">레이어</div>
+  <div class="lib" id="layers"></div>
+  <div class="trow">
+    <button class="btn" id="undo">마지막 레이어 취소</button>
+    <button class="btn sp" id="clearall">전부 지우기</button>
+  </div>
 </div>
 
 <!-- 소리 탐색 -->
@@ -640,6 +732,9 @@ const el = {};
  'lib','lib-open','lib-close','lib-slots','lib-list','lib-count',
  'artic','artic-open','artic-close','artic-slots','artic-recipe','artic-src',
  'artic-sliders','artic-play','artic-reset','artic-save',
+ 'loopbar','rec','stop','metro','lbarfill','lstat','loopmenu',
+ 'loop','loop-close','loop-sub','bpm','bpmv','countin','countinv','snap','snapv',
+ 'metro2','metrov','layers','undo','clearall',
  'exp','exp-open','exp-close','exp-slots','exp-a','exp-b','exp-mix','exp-mixv',
  'exp-play','exp-rnd','exp-vary','exp-info','exp-again','exp-keep','exp-near'
 ].forEach(id => { el[id] = document.getElementById(id); });
@@ -742,6 +837,7 @@ function play(slot, x, y, src, v){
   if(x != null) ripple(p, x, y, v);
   try { navigator.vibrate && navigator.vibrate(Math.round(4 + 8 * v)); } catch(_){}
   noteForChord(slot, src);
+  recordHit(slot, v, src);
 }
 
 /* 지속음을 놓는다 */
@@ -749,6 +845,7 @@ function stopHold(src){
   const h = holding.get(src);
   if(!h) return;
   holding.delete(src);
+  recordRelease(src);
   try{ h.voice.release(ctx.currentTime); }catch(_){}
   // 같은 패드를 다른 손가락이 아직 잡고 있으면 불을 끄지 않는다
   if(![...holding.values()].some(o => o.slot === h.slot)) padEl[h.slot].classList.remove('ringing');
@@ -1009,6 +1106,228 @@ function renderArtic(){
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   루프스테이션
+
+   루프 길이는 "첫 녹음 길이 + 자동 마디 스냅"으로 정했다.
+   BPM을 먼저 물어보면 "REC 누르고 그냥 치면 된다"가 깨지기 때문이다.
+   그냥 치게 두고, 끝나면 길이를 재서 가장 가까운 마디로 반올림한다.
+
+   재생은 setTimeout이 아니라 ctx.currentTime 기준 미리보기 스케줄러다.
+   탭이 백그라운드로 가면 타이머가 throttle 되지만 오디오 시계는 계속 간다.
+   ═══════════════════════════════════════════════════════════════ */
+const LOOP = {
+  bpm:90, countIn:true, snap:true, metro:false,
+  len:0, layers:[], playing:false, startAt:0,
+  recording:false, armed:false, recStart:0, recEvents:[], recPending:new Map()
+};
+let schedTimer = null, nextCycle = 0, cycleNo = 0;
+const LOOKAHEAD = 0.3, TICK = 40;
+
+const beatDur = () => 60 / LOOP.bpm;
+const barDur  = () => beatDur() * 4;
+
+/* 메트로놈 — 프리셋을 쓰지 않고 직접 낸다 (킷을 바꿔도 안 흔들리게) */
+function click(at, strong){
+  if(!ctx) return;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'square';
+  o.frequency.setValueAtTime(strong ? 1600 : 1050, at);
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(strong ? 0.22 : 0.12, at + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.0001, at + 0.035);
+  o.connect(g).connect(master);
+  o.start(at); o.stop(at + 0.06);
+}
+
+/* 예약된 시각에 소리 하나 + 패드 불 */
+function fireAt(e, at){
+  const S = SOUNDS[e.sound];
+  if(!S) return;
+  let voice = null;
+  try { voice = articulate(S, at, e.v, !!S.sustain); } catch(err){ console.error(err); }
+  if(S.sustain && voice) {
+    const rel = at + Math.max(0.05, e.dur || 0.2);
+    setTimeout(() => { try{ voice.release(ctx.currentTime); }catch(_){} },
+               Math.max(0, (rel - ctx.currentTime) * 1000));
+  }
+  const slot = kit.indexOf(e.sound);
+  if(slot >= 0 && padEl[slot]){
+    setTimeout(() => flashPad(slot, e.v), Math.max(0, (at - ctx.currentTime) * 1000));
+  }
+}
+function flashPad(slot, v){
+  const p = padEl[slot];
+  if(!p) return;
+  p.style.setProperty('--v', (v || 0.8).toFixed(2));
+  p.classList.remove('hit'); void p.offsetWidth; p.classList.add('hit');
+  clearTimeout(p._lt);
+  p._lt = setTimeout(() => p.classList.remove('hit'), 95);
+}
+
+function scheduleCycle(t0){
+  LOOP.layers.forEach(L => {
+    if(L.muted) return;
+    L.events.forEach(e => { const at = t0 + e.t; if(at > ctx.currentTime - 0.02) fireAt(e, at); });
+  });
+  if(LOOP.metro){
+    const n = Math.max(1, Math.round(LOOP.len / beatDur()));
+    for(let i = 0; i < n; i++){
+      const at = t0 + i * beatDur();
+      if(at > ctx.currentTime - 0.02) click(at, i % 4 === 0);
+    }
+  }
+}
+
+function tick(){
+  if(!LOOP.playing || !ctx || !LOOP.len) return;
+  while(nextCycle < ctx.currentTime + LOOKAHEAD){
+    scheduleCycle(nextCycle);
+    nextCycle += LOOP.len;
+    cycleNo++;
+  }
+}
+
+function startPlayback(at){
+  LOOP.playing = true;
+  LOOP.startAt = at;
+  nextCycle = at; cycleNo = 0;
+  clearInterval(schedTimer);
+  schedTimer = setInterval(tick, TICK);
+  tick();
+  requestAnimationFrame(drawBar);
+  updateLoopUI();
+}
+function stopPlayback(){
+  LOOP.playing = false;
+  clearInterval(schedTimer); schedTimer = null;
+  el.lbarfill.style.width = '0%';
+  updateLoopUI();
+}
+function drawBar(){
+  if(!LOOP.playing || !LOOP.len){ el.lbarfill.style.width = '0%'; return; }
+  const pos = ((ctx.currentTime - LOOP.startAt) % LOOP.len) / LOOP.len;
+  el.lbarfill.style.width = (pos * 100).toFixed(1) + '%';
+  requestAnimationFrame(drawBar);
+}
+
+/* ── 녹음 ── */
+function armRec(){
+  if(!ctx){ return; }
+  ensureRunning();
+  if(LOOP.recording){ finishRec(); return; }
+  LOOP.recEvents = []; LOOP.recPending.clear();
+  const delay = LOOP.countIn ? beatDur() * 4 : 0.08;
+  const t0 = ctx.currentTime + 0.08;
+  if(LOOP.countIn) for(let i = 0; i < 4; i++) click(t0 + i * beatDur(), i === 0);
+  LOOP.armed = true;
+  updateLoopUI();
+  setTimeout(() => {
+    LOOP.armed = false; LOOP.recording = true;
+    // 이미 루프가 돌고 있으면 그 위에 겹쳐 녹음한다
+    LOOP.recStart = LOOP.playing ? LOOP.startAt : ctx.currentTime;
+    updateLoopUI();
+  }, delay * 1000);
+}
+
+function finishRec(){
+  if(!LOOP.recording) return;
+  LOOP.recording = false;
+  // 아직 안 뗀 지속음은 지금 뗀 것으로 친다
+  LOOP.recPending.forEach(e => { if(e.dur == null) e.dur = ctx.currentTime - LOOP.recStart - e.t; });
+  LOOP.recPending.clear();
+
+  if(!LOOP.len){
+    const raw = Math.max(0.4, ctx.currentTime - LOOP.recStart);
+    LOOP.len = LOOP.snap ? Math.max(1, Math.round(raw / barDur())) * barDur() : raw;
+  }
+  if(LOOP.recEvents.length){
+    LOOP.recEvents.forEach(e => { e.t = ((e.t % LOOP.len) + LOOP.len) % LOOP.len; });
+    LOOP.layers.push({ events: LOOP.recEvents.slice(), muted:false });
+  }
+  LOOP.recEvents = [];
+  if(LOOP.layers.length) startPlayback(LOOP.playing ? LOOP.startAt : ctx.currentTime + 0.06);
+  else { LOOP.len = 0; stopPlayback(); }
+  renderLayers();
+}
+
+function recordHit(slot, v, src){
+  if(!LOOP.recording) return;
+  const e = { t: ctx.currentTime - LOOP.recStart, sound: kit[slot], v, dur: null };
+  LOOP.recEvents.push(e);
+  if(SOUNDS[kit[slot]].sustain && src != null) LOOP.recPending.set(src, e);
+}
+function recordRelease(src){
+  const e = LOOP.recPending.get(src);
+  if(!e) return;
+  e.dur = Math.max(0.05, ctx.currentTime - LOOP.recStart - e.t);
+  LOOP.recPending.delete(src);
+}
+
+function clearLoop(){
+  stopPlayback();
+  LOOP.layers = []; LOOP.len = 0; LOOP.recording = false; LOOP.armed = false;
+  LOOP.recEvents = []; LOOP.recPending.clear();
+  renderLayers(); updateLoopUI();
+}
+
+function updateLoopUI(){
+  el.rec.classList.toggle('recording', LOOP.recording);
+  el.rec.classList.toggle('armed', LOOP.armed);
+  el.rec.textContent = LOOP.recording ? '녹음중' : LOOP.armed ? '준비…' : 'REC';
+  el.metro.classList.toggle('on', LOOP.metro);
+  el.metro.textContent = '♩ ' + LOOP.bpm;
+  el.stop.classList.toggle('on', LOOP.playing);
+  el.lstat.textContent = !LOOP.len ? '비어 있음'
+    : `${LOOP.layers.length}겹 · ${Math.round(LOOP.len / barDur())}마디`;
+  if(el['loop-sub']) el['loop-sub'].textContent =
+    LOOP.len ? `${Math.round(LOOP.len / barDur())}마디 · ${LOOP.len.toFixed(2)}초` : '아직 녹음 없음';
+  el.metrov.textContent = LOOP.metro ? '켬' : '끔';
+  el.countinv.textContent = LOOP.countIn ? '켬' : '끔';
+  el.snapv.textContent = LOOP.snap ? '켬' : '끔';
+}
+
+function renderLayers(){
+  el.layers.innerHTML = '';
+  if(!LOOP.layers.length){
+    el.layers.innerHTML = '<p class="note">아직 레이어가 없습니다.</p>';
+    updateLoopUI(); return;
+  }
+  LOOP.layers.forEach((L, i) => {
+    const names = [...new Set(L.events.map(e => (SOUNDS[e.sound] || {}).ko).filter(Boolean))];
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'libitem';
+    b.innerHTML = `<span class="lc" style="background:var(--s${i % 8})"></span>` +
+      `<span>레이어 ${i + 1}<span class="how">${L.events.length}타 · ${names.slice(0,4).join(', ')}</span></span>` +
+      `<span class="tag">${L.muted ? '음소거' : '켬'}</span>`;
+    b.addEventListener('click', () => { L.muted = !L.muted; renderLayers(); });
+    el.layers.appendChild(b);
+  });
+  updateLoopUI();
+}
+
+el.rec.addEventListener('click', armRec);
+el.stop.addEventListener('click', () => {
+  if(LOOP.recording) finishRec();
+  else if(LOOP.playing) stopPlayback();
+  else if(LOOP.len) startPlayback(ctx.currentTime + 0.06);
+});
+el.metro.addEventListener('click', () => { LOOP.metro = !LOOP.metro; updateLoopUI(); });
+el.loopmenu.addEventListener('click', () => { el.loop.hidden = false; renderLayers(); });
+el['loop-close'].addEventListener('click', () => { el.loop.hidden = true; });
+el.bpm.addEventListener('input', () => {
+  LOOP.bpm = parseInt(el.bpm.value, 10);
+  el.bpmv.textContent = LOOP.bpm; updateLoopUI();
+});
+el.countin.addEventListener('click', () => { LOOP.countIn = !LOOP.countIn; updateLoopUI(); });
+el.snap.addEventListener('click', () => { LOOP.snap = !LOOP.snap; updateLoopUI(); });
+el.metro2.addEventListener('click', () => { LOOP.metro = !LOOP.metro; updateLoopUI(); });
+el.undo.addEventListener('click', () => {
+  LOOP.layers.pop();
+  if(!LOOP.layers.length) clearLoop(); else renderLayers();
+});
+el.clearall.addEventListener('click', clearLoop);
+
+/* ═══════════════════════════════════════════════════════════════
    소리 탐색 — 파라미터 공간을 돌아다닌다.
 
    544개는 이 공간 위의 점이고, 점 사이의 빈 자리가 아직 아무도 안 낸 소리다.
@@ -1214,6 +1533,7 @@ el.start.addEventListener('click', openGate);
 addEventListener('keydown', e => { if(!gateOpened && e.key !== 'Tab') openGate(); });
 
 renderPads();
+renderLayers();
 
 /* ═══════════════════════════════════════════════════════════════
    설치 (PWA)
