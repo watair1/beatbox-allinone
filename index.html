@@ -199,7 +199,10 @@
     border-radius:50%;background:var(--cc,var(--txt));margin-top:-9px;border:0;cursor:pointer;}
   input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;
     background:var(--cc,var(--txt));border:0;cursor:pointer;}
-  .srcrow{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:10px;}
+  .agroup{font-size:11px;color:var(--dim);font-weight:700;margin:14px 0 6px;
+    border-top:1px solid var(--line);padding-top:10px;}
+  .agroup:first-child{border-top:0;margin-top:2px;}
+  .srcrow{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;}
   .srcbtn{font:inherit;font-size:10.5px;font-weight:600;padding:9px 2px;border-radius:9px;
     background:var(--panel);color:var(--dim);border:1px solid var(--line);cursor:pointer;}
   .srcbtn.sel{color:var(--txt);border-color:var(--cc);background:color-mix(in srgb,var(--cc) 16%,var(--panel));}
@@ -307,15 +310,21 @@
 'use strict';
 
 /* ═══════════════════════════════════════════════════════════════
-   출력 체인
+   소리 엔진 — 하이브리드
+     톤층(피치 스윕) + 노이즈층(필터) + 파열  →  성도 색(peaking)  →  엔벨로프
+
+   앞선 버전은 성도 모델을 뼈대로 삼았다가 실패했다. 신호 전체를 좁은 밴드패스에
+   통과시켜 포먼트 사이를 다 버렸고(관 속 웅웅거림), 킥의 피치 스윕을 없앴고,
+   타격음의 정체인 파열을 곁다리로 뒀다. 이번엔 고전 타악 합성이 뼈대고
+   성도는 peaking으로 '색'만 입힌다 — colour=0이면 성도를 아예 안 쓴다.
    ═══════════════════════════════════════════════════════════════ */
+let ctx = null, master = null, noiseBuf = null;
+
+
 function buildChain(ctx){
-  /* 소프트 클리퍼.
-     DynamicsCompressor를 리미터로 쓰면 안 된다 — 내부 메이크업 게인 때문에
-     지속음은 키우고 짧은 타격음은 눌러서, 맞춰 둔 소리 간 균형을 망가뜨린다.
-     (실측: 베이스 0.45 → 0.575로 커지고 퍼커션은 0.45 → 0.09로 눌렸다.)
-     tanh 니(knee)는 시간 상수가 없어 예측 가능하고 문턱 아래에선 완전히 투명하다.
-     그래서 단발은 손대지 않고, 여러 개를 동시에 쳐서 합이 넘칠 때만 부드럽게 접는다. */
+  /* 소프트 클리퍼. DynamicsCompressor를 리미터로 쓰면 내부 메이크업 게인 때문에
+     지속음은 키우고 짧은 타격음은 눌러서 소리 간 균형을 망가뜨린다.
+     tanh 니는 시간 상수가 없어 예측 가능하고 문턱 아래에선 완전히 투명하다. */
   const T = 0.5, n = 4096, c = new Float32Array(n);
   for(let i = 0; i < n; i++){
     const x = (i / (n - 1)) * 2 - 1, a = Math.abs(x);
@@ -328,31 +337,11 @@ function buildChain(ctx){
   return master;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   조음 합성 엔진
-
-   비트박스 소리는 결국 성도(vocal tract) 음향이다.
-       소스(성문·난류·입술진동) → 필터(포먼트 = 구강 형태) → 방사(입술)
-   그래서 파라미터를 소리 이름이 아니라 "해부학"으로 둔다.
-   그러면 알려진 소리도, 아직 아무도 안 낸 소리도 같은 공간 위의 점이 된다.
-
-     place  0=입술(앞) … 1=목(뒤)   → F2
-     open   0=닫힘     … 1=벌림     → F1
-     nasal  비강 결합               → 250Hz 공명 + 안티포먼트
-     tense  긴장도                  → 포먼트 Q
-     src    noise | voiced | fry | falsefold | lipbuzz
-     inward 흡기 여부               → 어택·스펙트럼
-     burst  파열 / breath 숨소리 층
-   ═══════════════════════════════════════════════════════════════ */
-let ctx = null, master = null, noiseBuf = null;
-
-/* 지금 값에서 목표까지 내려보낸다.
-   함정 두 개가 있다.
-   1) exponentialRampToValueAtTime은 "직전에 예약된 이벤트 시점"부터 램프를 건다.
-      at 시점에 값을 못 박아두지 않으면 램프가 어택 끝까지 거슬러 올라가서
-      누르자마자 감쇠가 시작돼 버린다. 그래서 setValueAtTime으로 앵커를 박는다.
-   2) 그 앵커 값을 param.value에서 읽으면 안 된다 — 예약된 램프가 반영되지 않아
-      엉뚱한 값으로 튀며 딸깍 소리가 난다. 호출하는 쪽이 아는 값을 넘긴다. */
+/* 예약된 램프를 끊고 다른 곳으로 보낸다.
+   exponentialRampToValueAtTime은 "직전에 예약된 이벤트 시점"부터 램프를 건다.
+   at 시점에 값을 못 박아두지 않으면 램프가 어택까지 거슬러 올라가
+   누르자마자 감쇠가 시작돼 버린다. 그 앵커 값은 param.value에서 읽으면 안 된다
+   (예약된 램프가 반영되지 않아 엉뚱한 값으로 튄다) — 호출하는 쪽이 넘긴다. */
 function rampFrom(param, at, from, to, dur){
   param.cancelScheduledValues(at);
   param.setValueAtTime(Math.max(from, 0.0001), at);
@@ -362,149 +351,164 @@ function rampFrom(param, at, from, to, dur){
 function formants(place, open){
   return [250 + 700 * open, 2400 - 1600 * place, 2500 + 500 * (1 - place)];
 }
+
 function noiseSrc(){
   const s = ctx.createBufferSource();
   s.buffer = noiseBuf; s.loop = true;
   return s;
 }
 
-/* 무엇이 떨고 있는가 */
-function makeSource(P, t){
-  const out = ctx.createGain(); out.gain.value = 1;
-  const stop = [];
+/* 감쇠 엔벨로프 하나 */
+function env1(t, peak, atk, dec, sustain){
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), t + atk);
+  if(!sustain) g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(dec, atk + 0.01));
+  return g;
+}
 
-  if(P.src === 'noise'){
-    const n = noiseSrc(); n.connect(out); n.start(t); stop.push(n);
+/* 성도 '색' — peaking 직렬.
+   밴드패스와 달리 포먼트만 강조하고 나머지는 그대로 통과시킨다.
+   colour=0이면 성도를 아예 안 쓴다 (킥·하이햇처럼 순수 타악은 이쪽). */
+function makeColour(P){
+  const inp = ctx.createGain();
+  if(!P.colour) return { inp, out: inp };
+  const [f1, f2, f3] = formants(P.place, P.open);
+  const Q = 0.8 + 3 * P.tense;
+  let node = inp;
+  [[f1, 10], [f2, 7], [f3, 4]].forEach(([f, g]) => {
+    const pk = ctx.createBiquadFilter();
+    pk.type = 'peaking'; pk.frequency.value = f; pk.Q.value = Q;
+    pk.gain.value = g * P.colour;
+    node.connect(pk); node = pk;
+  });
+  if(P.nasal > 0){                       // 비강: 낮은 공명 + 중역 안티포먼트
+    const nz = ctx.createBiquadFilter();
+    nz.type = 'peaking'; nz.frequency.value = 270; nz.Q.value = 2.5;
+    nz.gain.value = 12 * P.nasal * P.colour;
+    node.connect(nz); node = nz;
+    const anti = ctx.createBiquadFilter();
+    anti.type = 'peaking'; anti.frequency.value = 1100; anti.Q.value = 1.5;
+    anti.gain.value = -12 * P.nasal * P.colour;
+    node.connect(anti); node = anti;
   }
-  else if(P.src === 'lipbuzz'){
-    // 입술이 펄럭인다 — 낮은 구형파를 부드럽게 깎는다
+  return { inp, out: node };
+}
+
+/* 톤층 — 음정이 있는 부분. 피치 스윕이 여기 있다.
+   킥을 킥으로 만드는 건 150Hz→50Hz로 떨어지는 이 스윕이다. */
+function toneLayer(P, t, dur, sustain, stop){
+  if(P.tone === 'none' || !P.toneAmt) return null;
+  const out = ctx.createGain(); out.gain.value = 1;
+
+  const mkOsc = (type, mul, amp) => {
     const o = ctx.createOscillator();
-    o.type = 'square'; o.frequency.setValueAtTime(P.f0, t);
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = P.f0 * 9; lp.Q.value = 3;
-    o.connect(lp).connect(out); o.start(t); stop.push(o);
-  }
-  else if(P.src === 'fry'){
-    // 보컬 프라이 — 성대가 불규칙하게 튄다
-    const o = ctx.createOscillator();
-    o.type = 'sawtooth'; o.frequency.setValueAtTime(P.f0, t);
+    o.type = type;
+    o.frequency.setValueAtTime(P.f0 * mul, t);
+    if(P.fEnd && P.fEnd !== 1 && P.sweepT > 0){
+      o.frequency.exponentialRampToValueAtTime(Math.max(18, P.f0 * mul * P.fEnd), t + P.sweepT);
+    }
+    const g = ctx.createGain(); g.gain.value = amp;
+    o.connect(g).connect(out);
+    o.start(t); stop.push(o);
+    return o;
+  };
+
+  if(P.tone === 'falsefold'){
+    // 가성대까지 같이 떤다 = 서브하모닉. f0의 1/2, 1/3이 실제로 생긴다.
+    mkOsc('sawtooth', 1, 0.5); mkOsc('sawtooth', 0.5, 1); mkOsc('sawtooth', 1/3, 0.55);
+  } else if(P.tone === 'fry'){
+    // 성대가 불규칙하게 튄다 — 아주 낮은 톱니에 흔들림을 걸고 위를 깎는다
+    const o = mkOsc('sawtooth', 1, 1);
     const jit = ctx.createOscillator();
     jit.type = 'triangle'; jit.frequency.value = 11;
     const jg = ctx.createGain(); jg.gain.value = P.f0 * 0.22;
     jit.connect(jg).connect(o.frequency);
+    jit.start(t); stop.push(jit);
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 900;
-    o.connect(lp).connect(out);
-    o.start(t); jit.start(t); stop.push(o, jit);
+    const e = env1(t, P.toneAmt, 0.004, dur * (P.toneDecay || 1), sustain);
+    out.connect(lp).connect(e);
+    return e;
+  } else if(P.tone === 'lipbuzz'){
+    // 입술이 펄럭인다 — 낮은 구형파를 부드럽게 깎는다
+    const o = mkOsc('square', 1, 1);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = Math.max(180, P.f0 * 9); lp.Q.value = 3;
+    const e = env1(t, P.toneAmt, 0.004, dur * (P.toneDecay || 1), sustain);
+    out.connect(lp).connect(e);
+    return e;
+  } else {
+    mkOsc(P.tone, 1, 1);
   }
-  else if(P.src === 'falsefold'){
-    // 가성대까지 같이 떤다 = 서브하모닉. f0의 1/2, 1/3이 실제로 생긴다.
-    [[1, 0.5], [0.5, 1], [1/3, 0.55]].forEach(([mul, amp]) => {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth'; o.frequency.setValueAtTime(P.f0 * mul, t);
-      const g = ctx.createGain(); g.gain.value = amp;
-      o.connect(g).connect(out); o.start(t); stop.push(o);
-    });
-  }
-  else { // voiced
-    const o = ctx.createOscillator();
-    o.type = 'sawtooth'; o.frequency.setValueAtTime(P.f0, t);
-    o.connect(out); o.start(t); stop.push(o);
-  }
+  const e = env1(t, P.toneAmt, P.toneAtk || 0.003, dur * (P.toneDecay || 1), sustain);
+  out.connect(e);
+  return e;
+}
 
-  if(P.breath > 0){                    // 성대가 완전히 닫히지 않아 새는 공기
-    const n = noiseSrc();
+/* 노이즈층 — 숨/마찰. 하이패스가 밝기를 정한다 (하이햇 7kHz 등) */
+function noiseLayer(P, t, dur, sustain, stop){
+  if(!P.noiseAmt) return null;
+  const n = noiseSrc();
+  let node = n;
+  if(P.hp){
     const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = 1200;
-    const g = ctx.createGain(); g.gain.value = P.breath * 0.5;
-    n.connect(hp).connect(g).connect(out);
-    n.start(t); stop.push(n);
+    hp.type = 'highpass'; hp.frequency.value = P.hp; hp.Q.value = P.noiseQ || 0.7;
+    node.connect(hp); node = hp;
   }
-  return { out, stop };
+  if(P.lp){
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = P.lp; lp.Q.value = P.noiseQ || 0.7;
+    node.connect(lp); node = lp;
+  }
+  const e = env1(t, P.noiseAmt, P.inward ? 0.008 : 0.001, dur, sustain);
+  node.connect(e);
+  n.start(t); stop.push(n);
+  return e;
 }
 
-/* 구강이 어떤 모양인가 */
-function makeTract(P){
-  const [f1, f2, f3] = formants(P.place, P.open);
-  const Q = 3 + 12 * P.tense;
-  const inp = ctx.createGain(), out = ctx.createGain();
-
-  [[f1, 1], [f2, 0.7], [f3, 0.35]].forEach(([f, amp]) => {
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = Q;
-    const g = ctx.createGain(); g.gain.value = amp;
-    inp.connect(bp).connect(g).connect(out);
-  });
-
-  if(P.nasal > 0){                     // 비음 공명이 붙고 중역이 파인다
-    const nz = ctx.createBiquadFilter();
-    nz.type = 'bandpass'; nz.frequency.value = 270; nz.Q.value = 6;
-    const ng = ctx.createGain(); ng.gain.value = P.nasal * 1.1;
-    inp.connect(nz).connect(ng).connect(out);
-    const anti = ctx.createBiquadFilter();
-    anti.type = 'peaking'; anti.frequency.value = 1100;
-    anti.Q.value = 1.2; anti.gain.value = -14 * P.nasal;
-    out.connect(anti);
-    return { inp, out: anti, f1, f2, f3, Q };
-  }
-  return { inp, out, f1, f2, f3, Q };
-}
-
-/* 포먼트 밴드패스는 광대역 노이즈의 에너지를 대부분 깎아낸다.
-   대역폭(f/Q)에서 통과 에너지를 예측해 그만큼 되살린다.
-   이게 없으면 좁게(tense 높게) 조음한 소리일수록 안 들린다. */
-function makeup(P, f1, f2, f3, Q){
-  if(P.src !== 'noise') return 1;
-  const sr = ctx.sampleRate;
-  let e = 0;
-  [[f1, 1], [f2, 0.7], [f3, 0.35]].forEach(([f, a]) => { e += a * a * Math.PI * f / (2 * Q * sr); });
-  return Math.min(14, 0.30 / Math.sqrt(Math.max(e, 1e-9)));
+/* 파열 — 어택 순간의 터짐. 타격음의 정체는 여기 있다. */
+function burstLayer(P, t, stop){
+  if(!P.burst) return null;
+  const n = noiseSrc();
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = P.burstHz || 1800;
+  bp.Q.value = 0.9;
+  const bd = 0.003 + 0.018 * P.burst;
+  const e = env1(t, P.burst, 0.0008, bd, false);
+  n.connect(bp).connect(e);
+  n.start(t); n.stop(t + bd + 0.03);
+  return e;
 }
 
 function articulate(P, t, v, sustain){
-  const { out: src, stop } = makeSource(P, t);
-  const tract = makeTract(P);
-  const env = ctx.createGain();
+  const stop = [];
+  const dur = P.decay;
+  const mix = ctx.createGain(); mix.gain.value = 1;
 
-  // 흡기는 기류가 반대라 어택이 덜 날카롭다
-  const atk = P.inward ? 0.006 + 0.010 * (1 - v) : 0.001 + 0.003 * (1 - v);
-  const peak = Math.max(0.0002, v * makeup(P, tract.f1, tract.f2, tract.f3, tract.Q) * (P.gain || 1));
+  [ toneLayer(P, t, dur, sustain, stop),
+    noiseLayer(P, t, dur, sustain, stop),
+    burstLayer(P, t, stop)
+  ].forEach(layer => { if(layer) layer.connect(mix); });
 
-  env.gain.setValueAtTime(0.0001, t);
-  env.gain.exponentialRampToValueAtTime(peak, t + atk);
-  if(!sustain) env.gain.exponentialRampToValueAtTime(0.0001, t + P.decay);
+  const col = makeColour(P);
+  mix.connect(col.inp);
 
-  src.connect(tract.inp);
-  tract.out.connect(env);
-
-  const rad = ctx.createBiquadFilter();  // 방사 — 입술을 떠나며 고역이 살짝 들린다
-  rad.type = 'highshelf'; rad.frequency.value = 2000;
-  rad.gain.value = P.inward ? 2 : 5;
-  env.connect(rad).connect(master);
-
-  if(P.burst > 0){                       // 어택 순간의 터짐
-    const n = noiseSrc();
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = formants(P.place, P.open)[1];
-    bp.Q.value = 1.4;
-    const bg = ctx.createGain();
-    const bd = 0.004 + 0.020 * P.burst;
-    bg.gain.setValueAtTime(P.burst * v * 1.6, t);
-    bg.gain.exponentialRampToValueAtTime(0.0001, t + bd);
-    n.connect(bp).connect(bg).connect(master);
-    n.start(t); n.stop(t + bd + 0.02);
-  }
+  const outPeak = Math.max(0.0002, v * (P.gain || 1));
+  const out = ctx.createGain();
+  out.gain.setValueAtTime(outPeak, t);
+  col.out.connect(out).connect(master);
 
   const endAll = at => stop.forEach(s => { try{ s.stop(at); }catch(_){} });
-  if(!sustain) endAll(t + P.decay + 0.05);
+  if(!sustain) endAll(t + dur + 0.12);
 
   return {
     sustain,
     release(rt, fast){
-      const r = fast ? 0.03 : 0.05 + 0.25 * (P.src === 'noise' ? 0.2 : 1);
-      const at = Math.max(rt, t + atk);   // 어택 전에 떼면 앵커를 어택 끝으로 민다
-      rampFrom(env.gain, at, sustain ? peak : env.gain.value || peak, 0.0001, r);
+      const r = fast ? 0.03 : (P.rel || 0.12);
+      const at = Math.max(rt, t + 0.01);
+      rampFrom(out.gain, at, outPeak, 0.0001, r);
       endAll(at + r + 0.05);
     }
   };
@@ -515,29 +519,45 @@ function articulate(P, t, v, sustain){
    gain은 오프라인 렌더로 자동 정규화한 값 (전부 피크 0.45 부근)
    how = 입으로 어떻게 내는지. 이 앱의 목적은 이걸 알려주는 것이다.
    ═══════════════════════════════════════════════════════════════ */
+const D_ = {"tone":"none","f0":100,"fEnd":1,"sweepT":0,"toneAmt":0,"toneDecay":1,"noiseAmt":0,"hp":0,"lp":0,"noiseQ":0.7,"burst":0,"burstHz":1800,"colour":0,"place":0.5,"open":0.4,"nasal":0,"tense":0.4,"inward":0,"decay":0.3,"rel":0.12};
+const P_ = o => Object.assign({}, D_, o);
 const BUILTIN = {
-  kick:       {ko:'킥',            grp:'퍼커션', how:'입술을 붙였다 "브" 하고 터뜨린다',            src:'voiced',   f0:70,  place:0.05,open:0.30,nasal:0,  tense:0.25,inward:0,burst:0.85,breath:0.05,decay:0.34, gain:1.454},
-  throatKick: {ko:'스로트 킥',      grp:'퍼커션', how:'숨을 참고 목으로 "윽" — 목젖을 튕긴다',       src:'falsefold',f0:58,  place:0.95,open:0.22,nasal:0,  tense:0.40,inward:0,burst:0.45,breath:0.05,decay:0.30, gain:3.253},
-  kSnareIn:   {ko:'인워드 K 스네어', grp:'퍼커션', how:'숨을 들이마시며 "크" — 국내 기본 3스킬',      src:'noise',    f0:0,   place:0.62,open:0.55,nasal:0,  tense:0.55,inward:1,burst:0.95,breath:0.55,decay:0.20, gain:0.67},
-  kSnareOut:  {ko:'아웃워드 K 스네어',grp:'퍼커션',how:'내쉬면서 "크" — 인워드보다 배우기 쉽다',      src:'noise',    f0:0,   place:0.58,open:0.50,nasal:0,  tense:0.50,inward:0,burst:1.00,breath:0.35,decay:0.16, gain:0.477},
-  pfSnare:    {ko:'PF 스네어',      grp:'퍼커션', how:'입술 사이로 "프" — 부드러운 스네어',          src:'noise',    f0:0,   place:0.08,open:0.35,nasal:0,  tense:0.30,inward:0,burst:0.90,breath:0.60,decay:0.19, gain:0.282},
-  spitSnare:  {ko:'스핏 스네어',     grp:'퍼커션', how:'침 뱉듯 혀끝을 튕긴다 — 짧고 날카롭다',       src:'noise',    f0:0,   place:0.20,open:0.20,nasal:0,  tense:0.75,inward:0,burst:1.00,breath:0.25,decay:0.13, gain:0.359},
-  hatClosed:  {ko:'클로즈드 하이햇', grp:'퍼커션', how:'이를 다물고 혀를 이에 댔다 떼며 "츳"',        src:'noise',    f0:0,   place:0.35,open:0.10,nasal:0,  tense:0.85,inward:0,burst:0.55,breath:0.30,decay:0.055,gain:0.624, choke:'hat'},
-  hatOpen:    {ko:'오픈 하이햇',     grp:'퍼커션', how:'같은 "츳"인데 입을 살짝 열어 길게 흘린다',     src:'noise',    f0:0,   place:0.35,open:0.18,nasal:0,  tense:0.80,inward:0,burst:0.45,breath:0.45,decay:0.42, gain:0.487, choke:'hat'},
-  hatInward:  {ko:'인워드 하이햇',   grp:'퍼커션', how:'들이마시며 "츳" — 아웃워드와 번갈아 쓴다',     src:'noise',    f0:0,   place:0.45,open:0.12,nasal:0,  tense:0.90,inward:1,burst:0.35,breath:0.55,decay:0.07, gain:0.896, choke:'hat'},
-  rimshot:    {ko:'림샷',           grp:'퍼커션', how:'혀를 입천장에 붙였다 "딱" 하고 떼낸다',        src:'voiced',   f0:320, place:0.15,open:0.08,nasal:0,  tense:0.95,inward:0,burst:0.80,breath:0.05,decay:0.05, gain:3.96},
-  clap:       {ko:'클랩',           grp:'퍼커션', how:'혀와 볼로 넓게 터뜨린다 — 스네어에 겹쳐 친다',  src:'noise',    f0:0,   place:0.50,open:0.45,nasal:0,  tense:0.35,inward:0,burst:0.85,breath:0.20,decay:0.24, gain:0.45},
-
-  lipBass:    {ko:'립베이스',       grp:'베이스', how:'입술을 모아 낮게 떨어준다 (Lip Oscillation)',  src:'lipbuzz',  f0:52,  place:0.10,open:0.25,nasal:0,  tense:0.30,inward:0,burst:0.10,breath:0,   decay:0.6, sustain:1, gain:2.173},
-  throatBass: {ko:'스로트 베이스',   grp:'베이스', how:'가성대까지 같이 떨어 두껍게 — 서브하모닉',      src:'falsefold',f0:62,  place:0.90,open:0.30,nasal:0,  tense:0.45,inward:0,burst:0.05,breath:0,   decay:0.6, sustain:1, gain:1.845},
-  vibBass:    {ko:'바이브레이션 베이스',grp:'베이스',how:'더 조여서 기계처럼 떨리게',                  src:'falsefold',f0:44,  place:0.75,open:0.20,nasal:0.2,tense:0.70,inward:0,burst:0.05,breath:0,   decay:0.6, sustain:1, gain:2.142},
-  inwardBass: {ko:'인워드 베이스',   grp:'베이스', how:'들이마시며 목을 조여 낮게 — 기류가 반대',      src:'falsefold',f0:48,  place:0.85,open:0.28,nasal:0,  tense:0.55,inward:1,burst:0.05,breath:0.15,decay:0.6, sustain:1, gain:2.248},
-  vocalFry:   {ko:'보컬 프라이',     grp:'베이스', how:'성대를 아주 낮고 불규칙하게 튕긴다',           src:'fry',      f0:42,  place:0.70,open:0.30,nasal:0,  tense:0.50,inward:0,burst:0.05,breath:0,   decay:0.6, sustain:1, gain:2.464},
-  lipRoll:    {ko:'립롤',           grp:'베이스', how:'입술을 부르르 굴린다 — 립베이스보다 느린 진동', src:'lipbuzz',  f0:28,  place:0.12,open:0.30,nasal:0,  tense:0.20,inward:1,burst:0.10,breath:0.10,decay:0.6, sustain:1, gain:2.564},
-  nasalBass:  {ko:'나잘 베이스',     grp:'베이스', how:'코로 울린다 — 비강을 열고 낮게',              src:'voiced',   f0:60,  place:0.80,open:0.15,nasal:0.9,tense:0.60,inward:0,burst:0.05,breath:0,   decay:0.6, sustain:1, gain:1.452},
-
-  waterDrop:  {ko:'워터드롭',       grp:'효과',   how:'볼 안쪽을 손가락으로 튕기듯 "똑"',            src:'voiced',   f0:400, place:0.30,open:0.15,nasal:0,  tense:0.90,inward:0,burst:0.30,breath:0,   decay:0.10, gain:3.056},
-  suckerPunch:{ko:'서커펀치',       grp:'효과',   how:'빨아들이며 목 안쪽에서 낮게 터뜨린다',         src:'falsefold',f0:75,  place:0.88,open:0.35,nasal:0.3,tense:0.65,inward:1,burst:0.55,breath:0.30,decay:0.26, gain:3.115}
+  kick: P_({"tone":"sine","f0":150,"fEnd":0.33,"sweepT":0.11,"toneAmt":1,"burst":0.3,"burstHz":700,"decay":0.42,"ko":"킥","grp":"퍼커션","how":"입술을 붙였다 \"브\" 하고 터뜨린다","gain":0.552}),
+  kickDeep: P_({"tone":"sine","f0":120,"fEnd":0.3,"sweepT":0.16,"toneAmt":1,"burst":0.2,"burstHz":500,"decay":0.75,"ko":"딥 킥","grp":"퍼커션","how":"더 낮고 길게 — 808 계열","gain":0.549}),
+  throatKick: P_({"tone":"falsefold","f0":125,"fEnd":0.42,"sweepT":0.1,"toneAmt":0.9,"burst":0.35,"burstHz":600,"colour":0.5,"place":0.9,"open":0.25,"tense":0.5,"decay":0.34,"ko":"스로트 킥","grp":"퍼커션","how":"숨 참고 목으로 \"윽\" — 목젖을 튕긴다","gain":0.444}),
+  pfSnare: P_({"tone":"triangle","f0":180,"toneAmt":0.5,"toneDecay":0.6,"noiseAmt":0.85,"hp":1400,"burst":0.55,"burstHz":2600,"decay":0.19,"ko":"PF 스네어","grp":"퍼커션","how":"입술 사이로 \"프\" — 부드러운 스네어","gain":0.416}),
+  kSnareOut: P_({"noiseAmt":0.95,"hp":2200,"burst":0.9,"burstHz":3200,"colour":0.35,"place":0.6,"open":0.5,"tense":0.5,"decay":0.16,"ko":"아웃워드 K 스네어","grp":"퍼커션","how":"내쉬면서 \"크\" — 인워드보다 쉽다","gain":0.353}),
+  kSnareIn: P_({"noiseAmt":1,"hp":1800,"lp":9000,"burst":0.75,"burstHz":2400,"colour":0.45,"place":0.65,"open":0.55,"tense":0.55,"inward":1,"decay":0.21,"ko":"인워드 K 스네어","grp":"퍼커션","how":"숨을 들이마시며 \"크\" — 국내 기본 3스킬","gain":0.432}),
+  spitSnare: P_({"noiseAmt":0.8,"hp":3500,"burst":1,"burstHz":4200,"decay":0.11,"ko":"스핏 스네어","grp":"퍼커션","how":"침 뱉듯 혀끝을 튕긴다 — 짧고 날카롭다","gain":0.498}),
+  rimshot: P_({"tone":"triangle","f0":1700,"toneAmt":0.7,"toneDecay":0.5,"noiseAmt":0.35,"hp":2500,"burst":0.9,"burstHz":2800,"decay":0.05,"ko":"림샷","grp":"퍼커션","how":"혀를 입천장에 붙였다 \"딱\" 떼낸다","gain":0.651}),
+  clap: P_({"noiseAmt":0.9,"hp":1000,"lp":5000,"noiseQ":0.6,"burst":0.8,"burstHz":1500,"decay":0.22,"ko":"클랩","grp":"퍼커션","how":"혀와 볼로 넓게 터뜨린다 — 스네어에 겹쳐 친다","gain":0.637}),
+  hatClosed: P_({"noiseAmt":0.9,"hp":7000,"burst":0.35,"burstHz":8000,"decay":0.055,"ko":"클로즈드 하이햇","grp":"퍼커션","how":"이를 다물고 혀를 이에 댔다 떼며 \"츳\"","choke":"hat","gain":0.434}),
+  hatOpen: P_({"noiseAmt":0.95,"hp":6500,"burst":0.25,"burstHz":8000,"decay":0.42,"ko":"오픈 하이햇","grp":"퍼커션","how":"같은 \"츳\"인데 입을 열어 길게 흘린다","choke":"hat","gain":0.434}),
+  hatInward: P_({"noiseAmt":0.9,"hp":5500,"lp":12000,"burst":0.25,"burstHz":7000,"inward":1,"decay":0.07,"ko":"인워드 하이햇","grp":"퍼커션","how":"들이마시며 \"츳\" — 아웃워드와 번갈아 쓴다","choke":"hat","gain":0.582}),
+  cymbal: P_({"noiseAmt":0.9,"hp":4000,"burst":0.2,"burstHz":9000,"decay":1.5,"ko":"심벌","grp":"퍼커션","how":"\"차아\" 하고 길게 뿌린다","gain":0.378}),
+  tom: P_({"tone":"sine","f0":260,"fEnd":0.55,"sweepT":0.2,"toneAmt":1,"noiseAmt":0.12,"hp":2000,"burst":0.25,"burstHz":900,"decay":0.4,"ko":"톰","grp":"퍼커션","how":"입을 크게 벌리고 \"둠\" — 킥보다 높다","gain":0.494}),
+  lipBass: P_({"tone":"lipbuzz","f0":52,"toneAmt":1,"colour":0.5,"place":0.1,"open":0.28,"tense":0.3,"decay":0.6,"rel":0.14,"ko":"립베이스","grp":"베이스","how":"입술을 모아 낮게 떨어준다 (Lip Oscillation)","sustain":1,"gain":0.293}),
+  throatBass: P_({"tone":"falsefold","f0":62,"toneAmt":1,"colour":0.6,"place":0.9,"open":0.3,"tense":0.45,"decay":0.6,"rel":0.16,"ko":"스로트 베이스","grp":"베이스","how":"가성대까지 같이 떨어 두껍게 — 서브하모닉","sustain":1,"gain":0.271}),
+  vibBass: P_({"tone":"falsefold","f0":44,"toneAmt":1,"colour":0.7,"place":0.75,"open":0.2,"nasal":0.2,"tense":0.7,"decay":0.6,"ko":"바이브레이션 베이스","grp":"베이스","how":"더 조여서 기계처럼 떨리게","sustain":1,"gain":0.299}),
+  inwardBass: P_({"tone":"falsefold","f0":48,"toneAmt":1,"noiseAmt":0.12,"hp":800,"colour":0.55,"place":0.85,"open":0.28,"tense":0.55,"inward":1,"decay":0.6,"rel":0.16,"ko":"인워드 베이스","grp":"베이스","how":"들이마시며 목을 조여 낮게 — 기류가 반대","sustain":1,"gain":0.272}),
+  vocalFry: P_({"tone":"fry","f0":42,"toneAmt":1,"colour":0.5,"place":0.7,"open":0.3,"tense":0.5,"decay":0.6,"rel":0.14,"ko":"보컬 프라이","grp":"베이스","how":"성대를 아주 낮고 불규칙하게 튕긴다","sustain":1,"gain":0.326}),
+  lipRoll: P_({"tone":"lipbuzz","f0":28,"toneAmt":1,"noiseAmt":0.1,"hp":600,"colour":0.45,"place":0.12,"open":0.3,"tense":0.2,"inward":1,"decay":0.6,"ko":"립롤","grp":"베이스","how":"입술을 부르르 굴린다 — 립베이스보다 느린 진동","sustain":1,"gain":0.327}),
+  nasalBass: P_({"tone":"sawtooth","f0":60,"toneAmt":0.9,"colour":0.9,"place":0.8,"open":0.15,"nasal":0.9,"tense":0.6,"decay":0.6,"rel":0.14,"ko":"나잘 베이스","grp":"베이스","how":"코로 울린다 — 비강을 열고 낮게","sustain":1,"gain":0.269}),
+  subBass: P_({"tone":"sine","f0":38,"toneAmt":1,"decay":0.6,"rel":0.2,"ko":"서브 베이스","grp":"베이스","how":"거의 안 들리고 몸으로 느껴지는 저음","sustain":1,"gain":0.526}),
+  waterDrop: P_({"tone":"sine","f0":420,"fEnd":3.2,"sweepT":0.07,"toneAmt":1,"burst":0.2,"burstHz":2000,"decay":0.1,"ko":"워터드롭","grp":"효과","how":"볼 안쪽을 손가락으로 튕기듯 \"똑\"","gain":0.549}),
+  suckerPunch: P_({"tone":"falsefold","f0":80,"fEnd":0.45,"sweepT":0.13,"toneAmt":0.9,"noiseAmt":0.3,"hp":900,"burst":0.5,"burstHz":1200,"colour":0.6,"place":0.88,"open":0.35,"nasal":0.3,"tense":0.65,"inward":1,"decay":0.28,"ko":"서커펀치","grp":"효과","how":"빨아들이며 목 안쪽에서 낮게 터뜨린다","gain":0.503}),
+  scratch: P_({"noiseAmt":0.9,"hp":1200,"lp":6000,"noiseQ":2,"burst":0.4,"burstHz":2500,"colour":0.5,"place":0.4,"open":0.3,"tense":0.8,"decay":0.18,"ko":"크랩 스크래치","grp":"효과","how":"\"위카위카\" — 혀로 빠르게 앞뒤로 쓸어준다","gain":0.433}),
+  vinyl: P_({"noiseAmt":0.5,"hp":2500,"lp":9000,"burst":0.15,"burstHz":5000,"decay":0.5,"rel":0.1,"ko":"바이닐 크래클","grp":"효과","how":"혀끝으로 잔잔하게 지직거린다","sustain":1,"gain":0.71}),
+  siren: P_({"tone":"square","f0":700,"fEnd":2.2,"sweepT":0.35,"toneAmt":0.55,"colour":0.5,"place":0.25,"open":0.3,"tense":0.7,"decay":0.6,"rel":0.1,"ko":"사이렌","grp":"효과","how":"\"이우이우\" — 높은 음을 위아래로 왕복","sustain":1,"gain":0.679}),
+  zipper: P_({"noiseAmt":0.85,"hp":3000,"lp":11000,"noiseQ":3,"burst":0.3,"burstHz":6000,"decay":0.22,"ko":"지퍼","grp":"효과","how":"이 사이로 공기를 찍 밀어낸다","gain":0.344}),
+  tongueClick: P_({"tone":"triangle","f0":900,"toneAmt":0.4,"toneDecay":0.35,"noiseAmt":0.3,"hp":1500,"burst":0.85,"burstHz":2200,"decay":0.045,"ko":"텅 클릭","grp":"효과","how":"혀를 입천장에서 \"똑\" 떼낸다","gain":0.951}),
+  throatClick: P_({"tone":"sine","f0":180,"fEnd":0.5,"sweepT":0.03,"toneAmt":0.7,"burst":0.4,"burstHz":800,"colour":0.7,"place":0.95,"open":0.2,"tense":0.6,"decay":0.09,"ko":"스로트 클릭","grp":"효과","how":"목 안쪽에서 \"꿀\" 하고 삼키듯","gain":0.744}),
+  synBass: P_({"tone":"sawtooth","f0":55,"toneAmt":1,"colour":0.3,"open":0.3,"tense":0.6,"decay":0.6,"rel":0.1,"ko":"신스 베이스","grp":"신스","how":"전자음 — 톱니파 저음","sustain":1,"gain":0.471}),
+  synLead: P_({"tone":"square","f0":440,"toneAmt":0.55,"colour":0.4,"place":0.3,"tense":0.7,"decay":0.6,"rel":0.08,"ko":"신스 리드","grp":"신스","how":"전자음 — 날카로운 사각파","sustain":1,"gain":0.649}),
+  synPluck: P_({"tone":"triangle","f0":520,"fEnd":0.9,"sweepT":0.05,"toneAmt":0.8,"toneDecay":0.5,"burst":0.25,"burstHz":2500,"decay":0.22,"ko":"신스 플럭","grp":"신스","how":"전자음 — 짧게 튕기는 소리","gain":0.685}),
+  noiseSweep: P_({"noiseAmt":0.8,"hp":600,"lp":12000,"noiseQ":1.5,"decay":0.9,"ko":"노이즈 스윕","grp":"신스","how":"전자음 — 쉬이익 올라가는 노이즈","gain":0.476}),
+  zap: P_({"tone":"sawtooth","f0":1400,"fEnd":0.08,"sweepT":0.16,"toneAmt":0.7,"decay":0.24,"ko":"재프","grp":"신스","how":"전자음 — 피융 하고 떨어지는 소리","gain":0.84}),
+  blip: P_({"tone":"square","f0":1200,"toneAmt":0.45,"decay":0.06,"ko":"블립","grp":"신스","how":"전자음 — 짧은 삑","gain":1.298})
 };
 
 const SOUNDS = {};                        // BUILTIN + 사용자가 만든 것
@@ -861,16 +881,27 @@ function renderLib(){
    조음 — 해부학 파라미터를 직접 만진다.
    여기서 아직 아무도 안 낸 조합이 나온다.
    ═══════════════════════════════════════════════════════════════ */
-const SRCS = [['noise','무성 (숨)'],['voiced','성대'],['falsefold','가성대'],['fry','프라이'],['lipbuzz','입술']];
+/* 파형 — 무엇이 떨고 있는가 */
+const TONES = [['none','없음'],['sine','사인'],['triangle','삼각'],['sawtooth','톱니'],
+               ['square','사각'],['falsefold','가성대'],['fry','프라이'],['lipbuzz','입술']];
+
+/* [키, 이름, 최소, 최대, 간격, 표시, 그룹, 조건] */
 const AXES = [
-  ['place', '혀 위치',   0, 1, 0.01, v => v < .33 ? '앞 (입술·이)' : v < .66 ? '가운데 (입천장)' : '뒤 (목)'],
-  ['open',  '입 벌림',   0, 1, 0.01, v => v < .3 ? '거의 닫음' : v < .6 ? '조금 벌림' : '크게 벌림'],
-  ['nasal', '비강',      0, 1, 0.01, v => v < .1 ? '코 안 씀' : v < .5 ? '코 살짝' : '코로 울림'],
-  ['tense', '긴장',      0, 1, 0.01, v => v < .35 ? '느슨' : v < .7 ? '보통' : '바짝 조임'],
-  ['f0',    '진동 주파수',20,420, 1,  v => v < 60 ? '아주 낮음' : v < 130 ? '낮음' : v < 260 ? '중간' : '높음'],
-  ['breath','숨소리',    0, 1, 0.01, v => v < .15 ? '없음' : v < .5 ? '조금' : '많이'],
-  ['burst', '파열',      0, 1, 0.01, v => v < .2 ? '없음' : v < .6 ? '보통' : '강하게'],
-  ['decay', '길이',      0.02, 1.2, 0.01, v => Math.round(v*1000) + 'ms']
+  ['f0',      '시작 주파수', 20, 2000, 1,    v => Math.round(v)+' Hz',        '톤',  S => S.tone!=='none'],
+  ['fEnd',    '스윕 끝',    0.05, 4,   0.01, v => '×'+v.toFixed(2),           '톤',  S => S.tone!=='none'],
+  ['sweepT',  '스윕 시간',   0,   0.6, 0.005,v => Math.round(v*1000)+' ms',   '톤',  S => S.tone!=='none'],
+  ['toneAmt', '톤 양',      0,    1,   0.01, v => v.toFixed(2),               '톤',  S => S.tone!=='none'],
+  ['noiseAmt','노이즈 양',   0,    1,   0.01, v => v.toFixed(2),               '노이즈'],
+  ['hp',      '하이패스',    0,  12000, 100,  v => v ? Math.round(v)+' Hz':'끔','노이즈', S => S.noiseAmt>0],
+  ['lp',      '로우패스',    0,  16000, 100,  v => v ? Math.round(v)+' Hz':'끔','노이즈', S => S.noiseAmt>0],
+  ['burst',   '파열 양',     0,    1,   0.01, v => v.toFixed(2),               '파열'],
+  ['burstHz', '파열 주파수', 200, 10000, 50,  v => Math.round(v)+' Hz',        '파열', S => S.burst>0],
+  ['colour',  '성도 색',     0,    1,   0.01, v => v ? v.toFixed(2) : '안 씀',  '조음'],
+  ['place',   '혀 위치',     0,    1,   0.01, v => v<.33?'앞 (입술·이)':v<.66?'가운데 (입천장)':'뒤 (목)', '조음', S=>S.colour>0],
+  ['open',    '입 벌림',     0,    1,   0.01, v => v<.3?'거의 닫음':v<.6?'조금 벌림':'크게 벌림',           '조음', S=>S.colour>0],
+  ['nasal',   '비강',       0,    1,   0.01, v => v<.1?'코 안 씀':v<.5?'코 살짝':'코로 울림',              '조음', S=>S.colour>0],
+  ['tense',   '긴장',       0,    1,   0.01, v => v<.35?'느슨':v<.7?'보통':'바짝 조임',                   '조음', S=>S.colour>0],
+  ['decay',   '길이',    0.02,  2.5,  0.01, v => Math.round(v*1000)+' ms',   '공통']
 ];
 
 function articTitleId(){ return kit[selSlot]; }
@@ -880,47 +911,56 @@ function renderArtic(){
   el.artic.style.setProperty('--cc', `var(--s${selSlot})`);
   slotButtons(el['artic-slots'], renderArtic);
 
+  const place = AXES.find(a => a[0]==='place')[5], open = AXES.find(a => a[0]==='open')[5];
   el['artic-recipe'].innerHTML =
-    `<b>${S.ko}</b> — ${S.how || ''}<br>` +
-    `<span style="opacity:.8">${S.inward ? '숨을 들이마시며' : '숨을 내쉬며'} · ` +
-    `${AXES[0][5](S.place)} · ${AXES[1][5](S.open)}${S.nasal > .1 ? ' · ' + AXES[2][5](S.nasal) : ''}` +
-    `${S.sustain ? ' · 누르는 동안 지속' : ''}</span>`;
+    `<b>${S.ko}</b> — ${S.how || ''}<br><span style="opacity:.8">` +
+    `${S.inward ? '숨을 들이마시며' : '숨을 내쉬며'}` +
+    (S.colour > 0 ? ` · ${place(S.place)} · ${open(S.open)}` : '') +
+    (S.nasal > .1 && S.colour > 0 ? ' · 코로 울림' : '') +
+    (S.sustain ? ' · 누르는 동안 지속' : '') + '</span>';
 
   el['artic-src'].innerHTML = '';
-  SRCS.forEach(([v, ko]) => {
+  TONES.forEach(([v, ko]) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'srcbtn' + (S.src === v ? ' sel' : '');
+    b.type='button'; b.className='srcbtn' + (S.tone===v ? ' sel':'');
     b.textContent = ko;
-    b.addEventListener('click', () => { S.src = v; save(); renderArtic(); preview(id); });
+    b.addEventListener('click', () => { S.tone = v; save(); renderArtic(); preview(id); });
     el['artic-src'].appendChild(b);
   });
 
   const host = el['artic-sliders'];
   host.innerHTML = '';
-  AXES.forEach(([key, ko, min, max, step, fmt]) => {
-    if(key === 'f0' && S.src === 'noise') return;      // 무성음은 진동 주파수가 없다
-    const row = document.createElement('div'); row.className = 'slider';
-    const lab = document.createElement('div'); lab.className = 'lab';
+  let lastGrp = null;
+  AXES.forEach(([key, ko, min, max, step, fmt, grp, when]) => {
+    if(when && !when(S)) return;
+    if(grp !== lastGrp){
+      const h = document.createElement('div');
+      h.className = 'agroup'; h.textContent = grp;
+      host.appendChild(h); lastGrp = grp;
+    }
+    const row = document.createElement('div'); row.className='slider';
+    const lab = document.createElement('div'); lab.className='lab';
     const val = document.createElement('b'); val.textContent = fmt(S[key]);
-    lab.append(Object.assign(document.createElement('span'), { textContent: ko }), val);
+    lab.append(Object.assign(document.createElement('span'), {textContent: ko}), val);
     const r = document.createElement('input');
-    r.type = 'range'; r.min = min; r.max = max; r.step = step; r.value = S[key];
+    r.type='range'; r.min=min; r.max=max; r.step=step; r.value=S[key];
     r.setAttribute('aria-label', S.ko + ' ' + ko);
-    r.addEventListener('input', () => { S[key] = parseFloat(r.value); val.textContent = fmt(S[key]); save(); });
+    r.addEventListener('input', () => { S[key]=parseFloat(r.value); val.textContent=fmt(S[key]); save(); });
     r.addEventListener('change', () => { preview(id); renderArtic(); });
     row.append(lab, r); host.appendChild(row);
   });
 
-  const io = document.createElement('div'); io.className = 'trow';
-  const b = document.createElement('button');
-  b.type = 'button'; b.className = 'btn';
-  b.textContent = S.inward ? '들이마시며 (인워드)' : '내쉬며 (아웃워드)';
-  b.addEventListener('click', () => { S.inward = S.inward ? 0 : 1; save(); renderArtic(); preview(id); });
+  const h = document.createElement('div'); h.className='agroup'; h.textContent='기류 · 지속';
+  const io = document.createElement('div'); io.className='trow';
+  const bi = document.createElement('button');
+  bi.type='button'; bi.className='btn';
+  bi.textContent = S.inward ? '들이마시며 (인워드)' : '내쉬며 (아웃워드)';
+  bi.addEventListener('click', () => { S.inward = S.inward?0:1; save(); renderArtic(); preview(id); });
   const su = document.createElement('button');
-  su.type = 'button'; su.className = 'btn';
+  su.type='button'; su.className='btn';
   su.textContent = S.sustain ? '누르는 동안 지속' : '한 방';
-  su.addEventListener('click', () => { S.sustain = S.sustain ? 0 : 1; save(); renderPads(); renderArtic(); preview(id); });
-  io.append(b, su); host.appendChild(io);
+  su.addEventListener('click', () => { S.sustain = S.sustain?0:1; save(); renderPads(); renderArtic(); preview(id); });
+  io.append(bi, su); host.append(h, io);
 }
 
 el['lib-open'].addEventListener('click', () => { el.lib.hidden = false; renderLib(); });
