@@ -184,6 +184,15 @@
   .thead .btn{margin-left:auto;}
 
   /* 라이브러리 */
+  .steps{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;margin-bottom:4px;}
+  .step{
+    aspect-ratio:1;font:inherit;font-size:9.5px;font-weight:700;color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;padding:0;
+  }
+  .step.beat{border-color:#394052;}
+  .step.on{color:var(--bg);background:var(--cc,var(--txt));border-color:var(--cc,var(--txt));}
+  .step.cur{outline:2px solid var(--txt);outline-offset:1px;}
   .slotrow{display:grid;grid-template-columns:repeat(8,1fr);gap:5px;flex:0 0 auto;}
   .slotbtn{
     font:inherit;font-size:9.5px;font-weight:700;padding:8px 2px;border-radius:9px;
@@ -331,6 +340,7 @@
   <button class="lb" id="metro" type="button">♩ 90</button>
   <span class="lbar"><i id="lbarfill"></i></span>
   <span class="lstat" id="lstat">비어 있음</span>
+  <button class="lb" id="seqopen" type="button">▦</button>
   <button class="lb" id="loopmenu" type="button">…</button>
 </div>
 
@@ -355,6 +365,30 @@
   <p class="note">위에서 <b>바꿀 패드</b>를 고르고, 아래에서 소리를 누르면 그 자리에 들어갑니다. 누르면 미리 들려줍니다.</p>
   <div class="slotrow" id="lib-slots"></div>
   <div id="lib-list"></div>
+</div>
+
+<!-- 시퀀서 -->
+<div class="sheet" id="seq" hidden>
+  <div class="thead">
+    <b>시퀀서</b><span class="sub">손으로 못 치는 패턴을 찍어서</span>
+    <button class="btn" id="seq-close" type="button">닫기</button>
+  </div>
+  <div class="slotrow" id="seq-slots"></div>
+  <div class="agroup">16스텝 — <span id="seq-name"></span></div>
+  <div class="steps" id="seq-steps"></div>
+  <div class="trow">
+    <button class="btn" id="seq-on">시퀀서 <b id="seq-onv">끔</b></button>
+    <button class="btn" id="seq-clear">이 패드 비우기</button>
+    <button class="btn sp" id="seq-clearall">전부 비우기</button>
+  </div>
+  <div class="agroup">패턴 불러오기</div>
+  <div class="lib" id="seq-pats"></div>
+  <div class="agroup">속도 훈련</div>
+  <p class="note">느린 템포로 시작해서 한 바퀴 돌 때마다 조금씩 빨라집니다. 손에 익히는 표준 방법입니다.</p>
+  <div class="trow">
+    <button class="btn" id="tt-on">속도 훈련 <b id="tt-onv">끔</b></button>
+    <span class="lstat" id="tt-info"></span>
+  </div>
 </div>
 
 <!-- 루프 -->
@@ -732,7 +766,9 @@ const el = {};
  'lib','lib-open','lib-close','lib-slots','lib-list','lib-count',
  'artic','artic-open','artic-close','artic-slots','artic-recipe','artic-src',
  'artic-sliders','artic-play','artic-reset','artic-save',
- 'loopbar','rec','stop','metro','lbarfill','lstat','loopmenu',
+ 'loopbar','rec','stop','metro','lbarfill','lstat','loopmenu','seqopen',
+ 'seq','seq-close','seq-slots','seq-name','seq-steps','seq-on','seq-onv',
+ 'seq-clear','seq-clearall','seq-pats','tt-on','tt-onv','tt-info',
  'loop','loop-close','loop-sub','bpm','bpmv','countin','countinv','snap','snapv',
  'metro2','metrov','layers','undo','clearall',
  'exp','exp-open','exp-close','exp-slots','exp-a','exp-b','exp-mix','exp-mixv',
@@ -1165,6 +1201,7 @@ function flashPad(slot, v){
 }
 
 function scheduleCycle(t0){
+  scheduleSeq(t0);
   LOOP.layers.forEach(L => {
     if(L.muted) return;
     L.events.forEach(e => { const at = t0 + e.t; if(at > ctx.currentTime - 0.02) fireAt(e, at); });
@@ -1184,6 +1221,7 @@ function tick(){
     scheduleCycle(nextCycle);
     nextCycle += LOOP.len;
     cycleNo++;
+    if(cycleNo > 1) ttAdvance();      // 한 바퀴 돌 때마다 조금씩 빠르게
   }
 }
 
@@ -1207,6 +1245,7 @@ function drawBar(){
   if(!LOOP.playing || !LOOP.len){ el.lbarfill.style.width = '0%'; return; }
   const pos = ((ctx.currentTime - LOOP.startAt) % LOOP.len) / LOOP.len;
   el.lbarfill.style.width = (pos * 100).toFixed(1) + '%';
+  markStep();
   requestAnimationFrame(drawBar);
 }
 
@@ -1278,7 +1317,7 @@ function updateLoopUI(){
   el.metro.textContent = '♩ ' + LOOP.bpm;
   el.stop.classList.toggle('on', LOOP.playing);
   el.lstat.textContent = !LOOP.len ? '비어 있음'
-    : `${LOOP.layers.length}겹 · ${Math.round(LOOP.len / barDur())}마디`;
+    : `${LOOP.layers.length}겹${SEQ.on && seqAny() ? '+시퀀서' : ''} · ${Math.round(LOOP.len / barDur())}마디`;
   if(el['loop-sub']) el['loop-sub'].textContent =
     LOOP.len ? `${Math.round(LOOP.len / barDur())}마디 · ${LOOP.len.toFixed(2)}초` : '아직 녹음 없음';
   el.metrov.textContent = LOOP.metro ? '켬' : '끔';
@@ -1304,6 +1343,131 @@ function renderLayers(){
   });
   updateLoopUI();
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   시퀀서 — 16스텝. 손으로 못 치는 정확한 패턴을 찍는다.
+   루프와 같은 스케줄러를 쓰고, 루프가 없으면 1마디짜리를 만든다.
+   ═══════════════════════════════════════════════════════════════ */
+const SEQ = { on:false, steps:{} };        // steps[slot] = [16개 불리언]
+const STEPS = 16;
+function seqRow(slot){
+  if(!SEQ.steps[slot]) SEQ.steps[slot] = new Array(STEPS).fill(false);
+  return SEQ.steps[slot];
+}
+const seqAny = () => Object.values(SEQ.steps).some(r => r.some(Boolean));
+
+/* 손으로 치기 어려운 것 위주로 골랐다 */
+const PATTERNS = {
+  '기본 비트':   { 0:[0,4,8,12], 1:[4,12], 4:[0,2,4,6,8,10,12,14] },
+  '부메릭':      { 0:[0,3,6,10], 1:[4,12], 4:[2,6,10,14] },
+  '16비트 하이햇':{ 0:[0,8], 1:[4,12], 4:[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15] },
+  '셔플':        { 0:[0,6,8,14], 1:[4,12], 4:[0,3,6,9,12,15] },
+  '트랩':        { 0:[0,7,10], 1:[4,12], 4:[0,2,4,6,7,8,10,12,14,15] },
+  '드럼앤베이스': { 0:[0,10], 1:[4,12], 4:[0,2,4,6,8,10,12,14], 6:[4,12] }
+};
+
+function applyPattern(name){
+  SEQ.steps = {};
+  Object.entries(PATTERNS[name]).forEach(([slot, list]) => {
+    const row = seqRow(+slot);
+    list.forEach(i => { if(i < STEPS) row[i] = true; });
+  });
+  SEQ.on = true;
+  ensureLoopLen();
+  renderSeq();
+}
+
+/* 시퀀서를 켜려면 길이가 있어야 한다. 없으면 1마디를 만든다. */
+function ensureLoopLen(){
+  if(!LOOP.len){ LOOP.len = barDur(); }
+  if(!LOOP.playing && ctx) startPlayback(ctx.currentTime + 0.06);
+}
+
+/* 스케줄러가 부르는 시퀀서 파트 */
+function scheduleSeq(t0){
+  if(!SEQ.on || !LOOP.len) return;
+  const stepDur = LOOP.len / STEPS;
+  for(let i = 0; i < STEPS; i++){
+    const at = t0 + i * stepDur;
+    if(at <= ctx.currentTime - 0.02) continue;
+    for(const slot in SEQ.steps){
+      if(!SEQ.steps[slot][i]) continue;
+      const id = kit[+slot];
+      if(id) fireAt({ sound:id, v:0.9, dur:stepDur * 0.9 }, at);
+    }
+  }
+}
+
+/* ── 속도 훈련 — 한 바퀴마다 조금씩 빨라진다 ── */
+const TT = { on:false, from:60, to:140, stepBpm:4 };
+function ttAdvance(){
+  if(!TT.on) return;
+  if(LOOP.bpm < TT.to){
+    LOOP.bpm = Math.min(TT.to, LOOP.bpm + TT.stepBpm);
+    el.bpm.value = LOOP.bpm; el.bpmv.textContent = LOOP.bpm;
+    updateLoopUI(); renderTT();
+  }
+}
+function renderTT(){
+  el['tt-onv'].textContent = TT.on ? '켬' : '끔';
+  el['tt-info'].textContent = TT.on ? `${TT.from} → ${TT.to} BPM · 지금 ${LOOP.bpm}` : '';
+}
+
+function renderSeq(){
+  el.seq.style.setProperty('--cc', `var(--s${selSlot})`);
+  slotButtons(el['seq-slots'], renderSeq);
+  el['seq-name'].textContent = SOUNDS[kit[selSlot]].ko;
+  const row = seqRow(selSlot);
+  el['seq-steps'].innerHTML = '';
+  for(let i = 0; i < STEPS; i++){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'step' + (row[i] ? ' on' : '') + (i % 4 === 0 ? ' beat' : '');
+    b.dataset.i = i;
+    b.textContent = i % 4 === 0 ? (i / 4 + 1) : '';
+    b.addEventListener('click', () => {
+      row[i] = !row[i];
+      if(row[i]){ SEQ.on = true; ensureLoopLen(); playSound(SOUNDS[kit[selSlot]]); }
+      renderSeq();
+    });
+    el['seq-steps'].appendChild(b);
+  }
+  el['seq-onv'].textContent = SEQ.on ? '켬' : '끔';
+  el['seq-pats'].innerHTML = '';
+  Object.keys(PATTERNS).forEach(name => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'libitem';
+    const n = Object.values(PATTERNS[name]).reduce((s, l) => s + l.length, 0);
+    b.innerHTML = `<span class="lc" style="background:var(--s4)"></span>` +
+      `<span>${name}<span class="how">${n}타</span></span>`;
+    b.addEventListener('click', () => applyPattern(name));
+    el['seq-pats'].appendChild(b);
+  });
+  renderTT();
+  updateLoopUI();
+}
+
+/* 재생 중인 스텝을 표시 */
+function markStep(){
+  if(el.seq.hidden || !LOOP.playing || !LOOP.len) return;
+  const i = Math.floor(((ctx.currentTime - LOOP.startAt) % LOOP.len) / (LOOP.len / STEPS));
+  el['seq-steps'].querySelectorAll('.step').forEach((b, j) => b.classList.toggle('cur', j === i));
+}
+
+el.seqopen.addEventListener('click', () => { el.seq.hidden = false; renderSeq(); });
+el['seq-close'].addEventListener('click', () => { el.seq.hidden = true; });
+el['seq-on'].addEventListener('click', () => {
+  SEQ.on = !SEQ.on;
+  if(SEQ.on) ensureLoopLen();
+  renderSeq();
+});
+el['seq-clear'].addEventListener('click', () => { SEQ.steps[selSlot] = new Array(STEPS).fill(false); renderSeq(); });
+el['seq-clearall'].addEventListener('click', () => { SEQ.steps = {}; SEQ.on = false; renderSeq(); });
+el['tt-on'].addEventListener('click', () => {
+  TT.on = !TT.on;
+  if(TT.on){ TT.from = LOOP.bpm; TT.to = Math.min(200, LOOP.bpm + 50); }
+  renderTT();
+});
 
 el.rec.addEventListener('click', armRec);
 el.stop.addEventListener('click', () => {
