@@ -347,7 +347,7 @@
 <main class="pads" id="pads"><div id="combo"></div></main>
 
 <footer>
-  <span>가운데=세게 · 가장자리=약하게</span>
+  <button class="btn" id="more-open" type="button">기록 · 공유</button>
   <span class="stats">
     <span id="status" hidden></span>
     <span id="chords"></span>
@@ -365,6 +365,23 @@
   <p class="note">위에서 <b>바꿀 패드</b>를 고르고, 아래에서 소리를 누르면 그 자리에 들어갑니다. 누르면 미리 들려줍니다.</p>
   <div class="slotrow" id="lib-slots"></div>
   <div id="lib-list"></div>
+</div>
+
+<!-- 기록 · 공유 -->
+<div class="sheet" id="more" hidden>
+  <div class="thead">
+    <b>기록 · 공유</b><button class="btn" id="more-close" type="button">닫기</button>
+  </div>
+  <div class="agroup">내보내기</div>
+  <div class="trow">
+    <button class="btn" id="mk-link">공유 링크 만들기</button>
+    <button class="btn" id="mk-wav">WAV로 내보내기</button>
+  </div>
+  <div class="recipe" id="more-out">루프나 시퀀서를 만든 뒤 눌러보세요.</div>
+  <div class="agroup">연습 기록</div>
+  <div class="recipe" id="stat-sum"></div>
+  <div class="lib" id="stat-list"></div>
+  <div class="trow"><button class="btn sp" id="stat-reset">기록 지우기</button></div>
 </div>
 
 <!-- 시퀀서 -->
@@ -767,6 +784,7 @@ const el = {};
  'artic','artic-open','artic-close','artic-slots','artic-recipe','artic-src',
  'artic-sliders','artic-play','artic-reset','artic-save',
  'loopbar','rec','stop','metro','lbarfill','lstat','loopmenu','seqopen',
+ 'more','more-open','more-close','more-out','mk-link','mk-wav','stat-sum','stat-list','stat-reset',
  'seq','seq-close','seq-slots','seq-name','seq-steps','seq-on','seq-onv',
  'seq-clear','seq-clearall','seq-pats','tt-on','tt-onv','tt-info',
  'loop','loop-close','loop-sub','bpm','bpmv','countin','countinv','snap','snapv',
@@ -874,6 +892,7 @@ function play(slot, x, y, src, v){
   try { navigator.vibrate && navigator.vibrate(Math.round(4 + 8 * v)); } catch(_){}
   noteForChord(slot, src);
   recordHit(slot, v, src);
+  bumpStat(kit[slot]);
 }
 
 /* 지속음을 놓는다 */
@@ -1671,8 +1690,184 @@ el['artic-save'].addEventListener('click', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════
+   기록 · 공유 · 내보내기
+   ═══════════════════════════════════════════════════════════════ */
+const STORE_STAT = 'beatbox.stats.v1';
+let STAT = { total:0, byId:{}, days:{} };
+try{ Object.assign(STAT, JSON.parse(localStorage.getItem(STORE_STAT) || '{}')); }catch(_){}
+function bumpStat(id){
+  STAT.total = (STAT.total || 0) + 1;
+  STAT.byId[id] = (STAT.byId[id] || 0) + 1;
+  const d = new Date().toISOString().slice(0, 10);
+  STAT.days[d] = (STAT.days[d] || 0) + 1;
+  if(STAT.total % 10 === 0){ try{ localStorage.setItem(STORE_STAT, JSON.stringify(STAT)); }catch(_){} }
+}
+function renderStats(){
+  const days = Object.keys(STAT.days).length;
+  const top = Object.entries(STAT.byId).sort((a, b) => b[1] - a[1]);
+  el['stat-sum'].innerHTML =
+    `<b>${STAT.total.toLocaleString()}타</b> · ${days}일 · 오늘 ` +
+    `${(STAT.days[new Date().toISOString().slice(0,10)] || 0).toLocaleString()}타` +
+    (top.length ? `<br><span style="opacity:.8">가장 많이 친 소리: ${(SOUNDS[top[0][0]]||{ko:top[0][0]}).ko}</span>` : '');
+  el['stat-list'].innerHTML = '';
+  const max = top.length ? top[0][1] : 1;
+  top.slice(0, 10).forEach(([id, n]) => {
+    const S = SOUNDS[id] || { ko:id };
+    const d = document.createElement('div');
+    d.className = 'libitem';
+    d.style.background = `linear-gradient(90deg, color-mix(in srgb,var(--s4) 16%,var(--panel)) ${n/max*100}%, var(--panel) 0)`;
+    d.innerHTML = `<span>${S.ko}</span><span class="tag">${n.toLocaleString()}타</span>`;
+    el['stat-list'].appendChild(d);
+  });
+}
+
+/* ── 공유 링크 ──
+   서버 없이 URL 해시에 다 넣는다. 이름이 아니라 인덱스를 쓰고 시간은 ms 정수로
+   반올림해 길이를 줄인다. 내장에 없는 소리(내가 만든 것)만 파라미터를 통째로 싣는다. */
+function makeShare(){
+  const used = new Set(kit);
+  LOOP.layers.forEach(L => L.events.forEach(e => used.add(e.sound)));
+  const ids = [...used];
+  const custom = {};
+  ids.forEach(id => { if(!BUILTIN[id]) custom[id] = SOUNDS[id]; });
+  const idx = Object.fromEntries(ids.map((id, i) => [id, i]));
+  const data = {
+    v:1, b:LOOP.bpm, l:+(LOOP.len || 0).toFixed(3),
+    i:ids, c:custom, k:kit.map(id => idx[id]),
+    y:LOOP.layers.map(L => L.events.map(e =>
+        [Math.round(e.t * 1000), idx[e.sound], Math.round(e.v * 100), Math.round((e.dur || 0) * 1000)])),
+    // 스텝은 16비트 정수 하나로
+    s:Object.fromEntries(Object.entries(SEQ.steps)
+        .map(([sl, r]) => [sl, r.reduce((m, on, i) => m | (on << i), 0)])
+        .filter(([, m]) => m)),
+    q:SEQ.on ? 1 : 0
+  };
+  const json = JSON.stringify(data);
+  const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(json)))
+              .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // file://에서는 location.origin이 문자열 "null"이라 origin+pathname으로 만들면 링크가 깨진다.
+  // 로컬 파일로 여는 게 이 앱의 기본 사용법이므로 href에서 해시만 떼어 쓴다.
+  return location.href.split('#')[0] + '#b=' + b64;
+}
+
+function loadShare(){
+  const m = location.hash.match(/[#&]b=([A-Za-z0-9\-_]+)/);
+  if(!m) return false;
+  try{
+    const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    const d = JSON.parse(new TextDecoder().decode(bytes));
+    Object.entries(d.c || {}).forEach(([id, S]) => { SOUNDS[id] = S; });
+    if(d.k) kit = d.k.map(i => d.i[i]).map((id, n) => SOUNDS[id] ? id : DEFAULT_KIT[n]);
+    LOOP.bpm = d.b || 90; LOOP.len = d.l || 0;
+    LOOP.layers = (d.y || []).map(evs => ({ muted:false,
+      events: evs.map(([t, si, v, du]) => ({ t:t/1000, sound:d.i[si], v:v/100, dur:du/1000 })) }));
+    SEQ.steps = {}; SEQ.on = !!d.q;
+    Object.entries(d.s || {}).forEach(([sl, mask]) => {
+      SEQ.steps[sl] = Array.from({length:16}, (_, i) => !!(mask & (1 << i)));
+    });
+    return true;
+  }catch(e){ console.warn('share', e); return false; }
+}
+
+/* ── WAV 내보내기 ──
+   엔진이 ctx/master/noiseBuf를 클로저에서 읽으므로, 렌더링 동안만 오프라인으로
+   바꿔치기했다가 되돌린다. 덕분에 합성 코드를 한 줄도 복제하지 않는다. */
+function encodeWAV(buf){
+  const n = buf.length, ch = buf.numberOfChannels, sr = buf.sampleRate;
+  const ab = new ArrayBuffer(44 + n * ch * 2), dv = new DataView(ab);
+  const wr = (o, s) => { for(let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  wr(0,'RIFF'); dv.setUint32(4, 36 + n*ch*2, true); wr(8,'WAVE'); wr(12,'fmt ');
+  dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,ch,true);
+  dv.setUint32(24,sr,true); dv.setUint32(28,sr*ch*2,true);
+  dv.setUint16(32,ch*2,true); dv.setUint16(34,16,true);
+  wr(36,'data'); dv.setUint32(40, n*ch*2, true);
+  let o = 44;
+  for(let i = 0; i < n; i++) for(let c = 0; c < ch; c++){
+    const s = Math.max(-1, Math.min(1, buf.getChannelData(c)[i]));
+    dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7FFF, true); o += 2;
+  }
+  return new Blob([ab], { type:'audio/wav' });
+}
+
+async function renderWAV(cycles){
+  if(!LOOP.len) return null;
+  const sr = 44100, dur = LOOP.len * cycles + 0.6;
+  const oc = new OfflineAudioContext(1, Math.ceil(sr * dur), sr);
+  const realCtx = ctx, realMaster = master, realNoise = noiseBuf;
+  ctx = oc;
+  master = buildChain(oc);
+  noiseBuf = oc.createBuffer(1, sr * 0.5, sr);
+  const nd = noiseBuf.getChannelData(0);
+  for(let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  try{
+    for(let c = 0; c < cycles; c++){
+      const t0 = c * LOOP.len;
+      LOOP.layers.forEach(L => { if(!L.muted) L.events.forEach(e => {
+        const S = SOUNDS[e.sound]; if(!S) return;
+        const voice = articulate(S, t0 + e.t, e.v, !!S.sustain);
+        if(S.sustain && voice) voice.release(t0 + e.t + Math.max(0.05, e.dur || 0.2));
+      }); });
+      if(SEQ.on) for(let i = 0; i < STEPS; i++){
+        const at = t0 + i * (LOOP.len / STEPS);
+        for(const sl in SEQ.steps){
+          if(!SEQ.steps[sl][i]) continue;
+          const S = SOUNDS[kit[+sl]]; if(!S) continue;
+          const voice = articulate(S, at, 0.9, !!S.sustain);
+          if(S.sustain && voice) voice.release(at + LOOP.len / STEPS * 0.9);
+        }
+      }
+    }
+    return encodeWAV(await oc.startRendering());
+  } finally {
+    ctx = realCtx; master = realMaster; noiseBuf = realNoise;   // 반드시 되돌린다
+  }
+}
+
+el['more-open'].addEventListener('click', () => { el.more.hidden = false; renderStats(); });
+el['more-close'].addEventListener('click', () => { el.more.hidden = true; });
+el['stat-reset'].addEventListener('click', () => {
+  STAT = { total:0, byId:{}, days:{} };
+  try{ localStorage.setItem(STORE_STAT, JSON.stringify(STAT)); }catch(_){}
+  renderStats();
+});
+el['mk-link'].addEventListener('click', async () => {
+  const url = makeShare();
+  el['more-out'].innerHTML = `<b>공유 링크</b> (${(url.length/1024).toFixed(1)}KB)<br>` +
+    `<span style="opacity:.75;word-break:break-all;font-size:10.5px">${url.slice(0, 160)}…</span>`;
+  // 클립보드는 권한 상태에 따라 응답이 없을 수도 있다 → 안내가 멈추지 않게 제한 시간을 둔다
+  try{
+    await Promise.race([ navigator.clipboard.writeText(url),
+                         new Promise((_, rj) => setTimeout(rj, 800)) ]);
+    el['more-out'].innerHTML += '<br><b>복사됨</b>';
+  }catch(_){ el['more-out'].innerHTML += '<br><span style="opacity:.75">주소창에서 직접 복사하세요</span>'; }
+  try{ history.replaceState(null, '', url); }catch(_){}
+});
+let wavURL = null;
+el['mk-wav'].addEventListener('click', async () => {
+  if(!LOOP.len){ el['more-out'].textContent = '먼저 루프나 시퀀서를 만들어주세요.'; return; }
+  el['more-out'].textContent = '만드는 중…';
+  try{
+    const blob = await renderWAV(4);
+    if(wavURL) URL.revokeObjectURL(wavURL);
+    wavURL = URL.createObjectURL(blob);
+    /* 자동 클릭으로 내려받지 않는다.
+       렌더링을 await한 뒤에는 사용자 제스처 컨텍스트가 끊겨 있어서, 그때 클릭을
+       프로그램으로 날리면 새 탭이 차단되고 현재 탭이 blob으로 이동해버린다 —
+       앱이 통째로 날아가고 만들던 루프도 같이 사라진다.
+       그래서 링크만 띄우고 누르는 건 사용자에게 맡긴다. */
+    el['more-out'].innerHTML =
+      `<b>4바퀴 · ${(blob.size / 1024).toFixed(0)}KB</b> 준비됐습니다.<br>` +
+      `<a class="btn" style="display:inline-block;margin-top:8px;color:var(--txt);border-color:var(--txt)" ` +
+      `href="${wavURL}" download="beatbox-loop.wav">WAV 저장하기</a>`;
+  }catch(e){ el['more-out'].textContent = '실패: ' + e.message; }
+});
+
+/* ═══════════════════════════════════════════════════════════════
    생명주기
    ═══════════════════════════════════════════════════════════════ */
+addEventListener('pagehide', () => { try{ localStorage.setItem(STORE_STAT, JSON.stringify(STAT)); }catch(_){} });
 document.addEventListener('visibilitychange', () => {
   if(document.visibilityState === 'visible' && ctx) ctx.resume().then(showStatus, showStatus);
 });
@@ -1696,6 +1891,7 @@ function openGate(){
 el.start.addEventListener('click', openGate);
 addEventListener('keydown', e => { if(!gateOpened && e.key !== 'Tab') openGate(); });
 
+if(loadShare()) { try{ save(); }catch(_){} }
 renderPads();
 renderLayers();
 
