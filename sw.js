@@ -1,7 +1,7 @@
 /* 오프라인 캐시 전용 서비스워커.
    index.html은 이 파일 없이도 완전히 동작한다 — 등록에 실패하면 조용히 넘어간다.
    서비스워커만은 별도 파일이어야 해서(data:/blob:에서 등록 불가) 어쩔 수 없이 분리했다. */
-const CACHE = 'beatbox-v0.1.5';
+const CACHE = 'beatbox-v0.2';
 const ASSETS = ['.', 'index.html'];
 
 self.addEventListener('install', e => {
