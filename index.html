@@ -206,6 +206,11 @@
   .srcbtn{font:inherit;font-size:10.5px;font-weight:600;padding:9px 2px;border-radius:9px;
     background:var(--panel);color:var(--dim);border:1px solid var(--line);cursor:pointer;}
   .srcbtn.sel{color:var(--txt);border-color:var(--cc);background:color-mix(in srgb,var(--cc) 16%,var(--panel));}
+  .sel{font:inherit;font-size:12.5px;font-weight:600;color:var(--txt);background:var(--panel);
+    border:1px solid var(--line);border-radius:9px;padding:9px 10px;flex:1 1 0;min-width:0;}
+  #exp-play{font:inherit;font-size:15px;font-weight:700;padding:14px;border-radius:13px;
+    border:1px solid var(--cc,var(--txt));background:color-mix(in srgb,var(--cc,var(--txt)) 16%,var(--panel));
+    color:var(--txt);cursor:pointer;width:100%;}
   .trow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px;}
   .trow .sp{margin-left:auto;}
   #artic-play{font:inherit;font-size:15px;font-weight:700;padding:15px;border-radius:14px;
@@ -258,6 +263,7 @@
   <h1>비트박스 올인원</h1>
   <span class="ver">v0.2</span>
   <button class="btn" id="lib-open" type="button">소리 라이브러리</button>
+  <button class="btn" id="exp-open" type="button">탐색</button>
   <button class="btn" id="artic-open" type="button">조음</button>
 </header>
 
@@ -283,6 +289,43 @@
   <p class="note">위에서 <b>바꿀 패드</b>를 고르고, 아래에서 소리를 누르면 그 자리에 들어갑니다. 누르면 미리 들려줍니다.</p>
   <div class="slotrow" id="lib-slots"></div>
   <div id="lib-list"></div>
+</div>
+
+<!-- 소리 탐색 -->
+<div class="sheet" id="exp" hidden>
+  <div class="thead">
+    <b>소리 탐색</b>
+    <span class="sub">아직 아무도 안 낸 조합 찾기</span>
+    <button class="btn" id="exp-close" type="button">닫기</button>
+  </div>
+  <div class="slotrow" id="exp-slots"></div>
+
+  <div class="agroup">두 소리 사이</div>
+  <p class="note">양 끝을 고르고 슬라이더를 밀면 그 사이의 소리가 나옵니다. 중간 어딘가에 이름 없는 소리가 있습니다.</p>
+  <div class="trow">
+    <select class="sel" id="exp-a"></select>
+    <span style="color:var(--dim)">↔</span>
+    <select class="sel" id="exp-b"></select>
+  </div>
+  <div class="slider">
+    <div class="lab"><span>섞는 비율</span><b id="exp-mixv">50%</b></div>
+    <input type="range" id="exp-mix" min="0" max="1" step="0.01" value="0.5">
+  </div>
+  <button id="exp-play" type="button">들어보기</button>
+
+  <div class="agroup">무작위</div>
+  <div class="trow">
+    <button class="btn" id="exp-rnd">완전 무작위</button>
+    <button class="btn" id="exp-vary">이 소리에서 변형</button>
+  </div>
+  <div class="recipe" id="exp-info">버튼을 누르면 새 소리가 나옵니다.</div>
+  <div class="trow">
+    <button class="btn" id="exp-again">다시 듣기</button>
+    <button class="btn sp" id="exp-keep">이 소리 저장</button>
+  </div>
+
+  <div class="agroup">가까운 소리</div>
+  <div class="lib" id="exp-near"></div>
 </div>
 
 <!-- 조음 -->
@@ -596,7 +639,9 @@ const el = {};
 ['gate','start','gate-err','count','chords','combo','status','pads',
  'lib','lib-open','lib-close','lib-slots','lib-list','lib-count',
  'artic','artic-open','artic-close','artic-slots','artic-recipe','artic-src',
- 'artic-sliders','artic-play','artic-reset','artic-save'
+ 'artic-sliders','artic-play','artic-reset','artic-save',
+ 'exp','exp-open','exp-close','exp-slots','exp-a','exp-b','exp-mix','exp-mixv',
+ 'exp-play','exp-rnd','exp-vary','exp-info','exp-again','exp-keep','exp-near'
 ].forEach(id => { el[id] = document.getElementById(id); });
 
 const KEYS = ['A','S','D','F','J','K','L',';'];
@@ -962,6 +1007,166 @@ function renderArtic(){
   su.addEventListener('click', () => { S.sustain = S.sustain?0:1; save(); renderPads(); renderArtic(); preview(id); });
   io.append(bi, su); host.append(h, io);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   소리 탐색 — 파라미터 공간을 돌아다닌다.
+
+   544개는 이 공간 위의 점이고, 점 사이의 빈 자리가 아직 아무도 안 낸 소리다.
+   보간은 두 점을 잇는 선 위를, 무작위는 공간 전체를 뒤진다.
+   ═══════════════════════════════════════════════════════════════ */
+const NUM_AXES = ['f0','fEnd','sweepT','toneAmt','toneDecay','noiseAmt','hp','lp','noiseQ',
+                  'burst','burstHz','colour','place','open','nasal','tense','decay','rel'];
+// 거리 계산용 정규화 폭 (값 범위가 제각각이라 그냥 빼면 hp가 다 먹는다)
+const AXIS_SPAN = { f0:1200, fEnd:2, sweepT:0.5, toneAmt:1, toneDecay:1, noiseAmt:1,
+                    hp:10000, lp:14000, noiseQ:3, burst:1, burstHz:8000, colour:1,
+                    place:1, open:1, nasal:1, tense:1, decay:2, rel:0.4 };
+
+function lerpSound(A, B, t){
+  const o = { grp:'내가 만든', how:`${A.ko} ↔ ${B.ko} 사이 (${Math.round(t*100)}%)`,
+              ko:`${A.ko}×${B.ko}` };
+  NUM_AXES.forEach(k => { o[k] = A[k] + (B[k] - A[k]) * t; });
+  // 파형·기류·지속은 섞을 수 없는 값이라 가까운 쪽을 따른다
+  o.tone = t < 0.5 ? A.tone : B.tone;
+  o.inward = (t < 0.5 ? A.inward : B.inward) ? 1 : 0;
+  o.sustain = (t < 0.5 ? A.sustain : B.sustain) ? 1 : 0;
+  o.gain = A.gain + (B.gain - A.gain) * t;
+  return o;
+}
+
+const R = (a, b) => a + Math.random() * (b - a);
+const PICK = arr => arr[Math.floor(Math.random() * arr.length)];
+const TONE_LIST = ['none','sine','triangle','sawtooth','square','falsefold','fry','lipbuzz'];
+
+function randomSound(){
+  const tone = PICK(TONE_LIST);
+  const sustain = Math.random() < 0.3 ? 1 : 0;
+  const noiseAmt = tone === 'none' ? R(0.5, 1) : (Math.random() < 0.5 ? R(0, 0.6) : 0);
+  return P_({
+    ko:'무작위', grp:'내가 만든', how:'무작위로 나온 조합',
+    tone, f0: tone==='lipbuzz'||tone==='fry' ? R(22,90) : R(40, 900),
+    fEnd: Math.random() < 0.5 ? 1 : R(0.2, 2.5), sweepT: R(0.02, 0.3),
+    toneAmt: tone==='none' ? 0 : R(0.4, 1),
+    noiseAmt, hp: noiseAmt ? R(300, 9000) : 0, lp: noiseAmt && Math.random()<0.5 ? R(3000,15000) : 0,
+    burst: Math.random() < 0.7 ? R(0.1, 1) : 0, burstHz: R(500, 8000),
+    colour: Math.random() < 0.6 ? R(0.2, 1) : 0,
+    place: Math.random(), open: Math.random(), nasal: Math.random()<0.35 ? Math.random() : 0,
+    tense: Math.random(), inward: Math.random()<0.4 ? 1 : 0,
+    decay: sustain ? 0.6 : R(0.03, 0.9), sustain, gain: 1
+  });
+}
+
+/* 지금 소리에서 조금씩 흔든다 — 완전 무작위보다 쓸 만한 게 자주 나온다 */
+function varySound(S){
+  const o = Object.assign({}, S, { ko: S.ko + ' 변형', grp:'내가 만든',
+                                   how: S.ko + '에서 흔들어 나온 조합' });
+  NUM_AXES.forEach(k => {
+    const span = AXIS_SPAN[k] || 1;
+    o[k] = Math.max(0, S[k] + (Math.random() - 0.5) * span * 0.35);
+  });
+  o.fEnd = Math.max(0.05, o.fEnd);
+  if(Math.random() < 0.25) o.tone = PICK(TONE_LIST);
+  if(Math.random() < 0.2) o.inward = S.inward ? 0 : 1;
+  return o;
+}
+
+function soundDist(A, B){
+  let s = 0;
+  NUM_AXES.forEach(k => { const d = (A[k] - B[k]) / (AXIS_SPAN[k] || 1); s += d * d; });
+  if(A.tone !== B.tone) s += 0.35;
+  if(!!A.inward !== !!B.inward) s += 0.1;
+  if(!!A.sustain !== !!B.sustain) s += 0.2;
+  return Math.sqrt(s);
+}
+
+let expFound = null;      // 방금 만들어낸 소리
+
+function playSound(P){
+  if(!ctx) return;
+  ensureRunning();
+  try{
+    const voice = articulate(P, ctx.currentTime + 0.002, 0.95, !!P.sustain);
+    if(P.sustain) setTimeout(() => { try{ voice.release(ctx.currentTime); }catch(_){} }, 700);
+  }catch(e){ console.error(e); }
+}
+
+function expOptions(){
+  const opts = Object.entries(SOUNDS)
+    .map(([id, S]) => `<option value="${id}">${S.ko}</option>`).join('');
+  el['exp-a'].innerHTML = opts;
+  el['exp-b'].innerHTML = opts;
+  el['exp-a'].value = kit[selSlot];
+  el['exp-b'].value = Object.keys(SOUNDS).find(id => id !== kit[selSlot]) || kit[selSlot];
+}
+
+function expMix(){
+  const A = SOUNDS[el['exp-a'].value], B = SOUNDS[el['exp-b'].value];
+  if(!A || !B) return null;
+  return lerpSound(A, B, parseFloat(el['exp-mix'].value));
+}
+
+function showFound(P){
+  expFound = P;
+  const near = nearest(P, 1)[0];
+  el['exp-info'].innerHTML =
+    `<b>${P.ko}</b><br><span style="opacity:.8">` +
+    `${P.tone === 'none' ? '노이즈만' : '파형 ' + (TONES.find(t => t[0] === P.tone) || [,P.tone])[1]}` +
+    ` · ${P.inward ? '들이마시며' : '내쉬며'} · ${Math.round(P.decay * 1000)}ms` +
+    (P.sustain ? ' · 지속' : '') +
+    (near ? `<br>가장 가까운 기존 소리: ${near.S.ko} (거리 ${near.d.toFixed(2)})` : '') +
+    '</span>';
+  playSound(P);
+}
+
+function nearest(P, n){
+  return Object.entries(SOUNDS)
+    .map(([id, S]) => ({ id, S, d: soundDist(P, S) }))
+    .sort((a, b) => a.d - b.d).slice(0, n);
+}
+
+function renderNear(){
+  const cur = SOUNDS[kit[selSlot]];
+  const list = nearest(cur, 4).filter(o => o.S !== cur).slice(0, 3);
+  el['exp-near'].innerHTML = '';
+  list.forEach(({ id, S, d }) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'libitem';
+    b.innerHTML = `<span class="lc" style="background:var(--s${selSlot})"></span>` +
+      `<span>${S.ko}<span class="how">${S.how || ''}</span></span>` +
+      `<span class="tag">거리 ${d.toFixed(2)}</span>`;
+    b.addEventListener('click', () => playSound(S));
+    el['exp-near'].appendChild(b);
+  });
+}
+
+function renderExp(){
+  el.exp.style.setProperty('--cc', `var(--s${selSlot})`);
+  slotButtons(el['exp-slots'], () => { expOptions(); renderExp(); });
+  renderNear();
+}
+
+el['exp-open'].addEventListener('click', () => {
+  el.exp.hidden = false; expOptions(); renderExp();
+});
+el['exp-close'].addEventListener('click', () => { el.exp.hidden = true; });
+el['exp-mix'].addEventListener('input', () => {
+  el['exp-mixv'].textContent = Math.round(parseFloat(el['exp-mix'].value) * 100) + '%';
+});
+el['exp-mix'].addEventListener('change', () => { const P = expMix(); if(P) showFound(P); });
+el['exp-play'].addEventListener('click', () => { const P = expMix(); if(P) showFound(P); });
+el['exp-a'].addEventListener('change', () => { const P = expMix(); if(P) showFound(P); });
+el['exp-b'].addEventListener('change', () => { const P = expMix(); if(P) showFound(P); });
+el['exp-rnd'].addEventListener('click', () => showFound(randomSound()));
+el['exp-vary'].addEventListener('click', () => showFound(varySound(SOUNDS[kit[selSlot]])));
+el['exp-again'].addEventListener('click', () => { if(expFound) playSound(expFound); });
+el['exp-keep'].addEventListener('click', () => {
+  if(!expFound) return;
+  let n = 1; while(SOUNDS['my' + n]) n++;
+  const id = 'my' + n;
+  SOUNDS[id] = Object.assign({}, expFound, { ko: expFound.ko + ' ' + n });
+  kit[selSlot] = id;
+  save(); renderPads(); renderExp();
+  el['exp-info'].innerHTML = `<b>${SOUNDS[id].ko}</b> 저장됨 — ${KEYS[selSlot]} 패드에 들어갔습니다.`;
+});
 
 el['lib-open'].addEventListener('click', () => { el.lib.hidden = false; renderLib(); });
 el['lib-close'].addEventListener('click', () => { el.lib.hidden = true; });
